@@ -54,9 +54,6 @@ export function toMarkdown(data, _service) {
       lines.push("");
     }
 
-    lines.push(msg.content);
-    lines.push("");
-
     if (Array.isArray(msg.attachments) && msg.attachments.length > 0) {
       for (const attachment of msg.attachments) {
         const filename = attachment.filename || "attachment";
@@ -67,17 +64,20 @@ export function toMarkdown(data, _service) {
           lines.push("");
         }
 
-        if (attachment.uploadAssetId) {
-          lines.push(`Asset ID: ${attachment.uploadAssetId}`);
-          lines.push("");
-        }
+        // if (attachment.uploadAssetId) {
+        //   lines.push(`Asset ID: ${attachment.uploadAssetId}`);
+        //   lines.push("");
+        // }
 
-        if (attachment.url && attachment.url !== imageUrl) {
-          lines.push(`[${filename}](${attachment.url})`);
-          lines.push("");
-        }
+        // if (attachment.url && attachment.url !== imageUrl) {
+        //   lines.push(`[${filename}](${attachment.url})`);
+        //   lines.push("");
+        // }
       }
     }
+
+    lines.push(msg.content);
+    lines.push("");
 
     lines.push("----");
     lines.push("");
