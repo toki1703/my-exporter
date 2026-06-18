@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Exporter — 設定</title>
+  <link rel="stylesheet" href="../styles/material.css" />
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="app-bar">
+      <div class="app-bar__brand">
+        <img src="../icons/icon48.png" alt="" class="app-bar__icon" />
+        <div>
+          <h1 class="title-lg">My Exporter</h1>
+          <p class="supporting">エクスポートの設定</p>
+        </div>
+      </div>
+    </header>
+
+    <main class="content">
+      <!-- 出力形式 -->
+      <section class="card">
+        <label class="label">出力形式</label>
+        <p class="supporting" style="margin-bottom: 14px;">
+          ファイルとして保存するときの形式です。Obsidian へ保存する場合は常に Markdown になります。
+        </p>
+        <div class="segmented" id="format-toggle">
+          <button class="seg" data-format="json">JSON</button>
+          <button class="seg active" data-format="markdown">Markdown</button>
+        </div>
+      </section>
+
+      <!-- 出力先 -->
+      <section class="card">
+        <label class="label">出力先</label>
+        <div class="segmented" id="dest-toggle">
+          <button class="seg active" data-dest="download">📁 ファイル</button>
+          <button class="seg" data-dest="obsidian">🗒️ Obsidian</button>
+        </div>
+
+        <div id="obsidian-settings" class="obsidian-settings hidden">
+          <div class="field">
+            <span class="field-label">API キー</span>
+            <input type="password" id="inp-api-key" class="input" placeholder="Obsidian Local REST API プラグインの設定からコピー" />
+          </div>
+
+          <div class="field">
+            <span class="field-label">Vault フォルダ</span>
+            <div class="select-with-btn">
+              <select id="inp-vault-path" class="input">
+                <option value="">— フォルダを選択 —</option>
+              </select>
+              <button id="btn-refresh-folders" class="icon-btn" title="フォルダ一覧を更新">↻</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <span class="field-label">API URL</span>
+            <input type="text" id="inp-base-url" class="input" placeholder="http://127.0.0.1:27123" />
+          </div>
+        </div>
+      </section>
+
+      <!-- 一括エクスポート -->
+      <section class="card">
+        <label class="label">一括エクスポート</label>
+        <p class="supporting" style="margin-bottom: 14px;">
+          対象サービスのタブを開いた状態で実行してください。すべての会話をまとめてエクスポートします。
+        </p>
+        <div class="bulk-list">
+          <div class="bulk-row">
+            <span class="bulk-row__icon">💬</span>
+            <div class="bulk-row__text">
+              <span class="bulk-row__name">ChatGPT</span>
+              <span class="bulk-row__sub">全会話をエクスポート</span>
+            </div>
+            <button class="btn btn--tonal bulk-row__btn" id="btn-chatgpt-all">実行</button>
+          </div>
+          <div class="bulk-row">
+            <span class="bulk-row__icon">🤖</span>
+            <div class="bulk-row__text">
+              <span class="bulk-row__name">Claude</span>
+              <span class="bulk-row__sub">全会話をエクスポート</span>
+            </div>
+            <button class="btn btn--tonal bulk-row__btn" id="btn-claude-all">実行</button>
+          </div>
+        </div>
+
+        <div id="progress-section" class="progress-section hidden">
+          <div class="progress-header">
+            <span class="lbl" id="progress-label"></span>
+            <span class="cnt" id="progress-count"></span>
+          </div>
+          <div class="progress-track">
+            <div id="progress-fill" class="progress-fill"></div>
+          </div>
+        </div>
+      </section>
+
+      <div id="message" class="message hidden"></div>
+    </main>
+  </div>
+
+  <script src="options.js" type="module"></script>
+</body>
+</html>

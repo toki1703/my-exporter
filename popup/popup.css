@@ -1,0 +1,96 @@
+body {
+  width: 320px;
+  background: var(--surface);
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 12px 14px 20px;
+}
+
+.top h1 {
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.body {
+  padding: 4px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ---------- Detected service ---------- */
+
+.service-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--surface-2);
+  border-radius: var(--radius-md);
+}
+
+.service-card__icon {
+  font-size: 26px;
+  width: 32px;
+  text-align: center;
+}
+
+.service-card__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.service-card__name {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.service-card__sub {
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+.service-card--unsupported {
+  opacity: 0.85;
+}
+
+/* ---------- Primary action ---------- */
+
+.export-btn {
+  width: 100%;
+  padding: 13px;
+  font-size: 15px;
+}
+
+/* ---------- Settings summary ---------- */
+
+.settings-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.settings-summary:hover {
+  background: var(--surface-2);
+}
+
+.settings-summary__edit {
+  color: var(--primary);
+  font-weight: 500;
+}

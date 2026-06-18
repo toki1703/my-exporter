@@ -1,0 +1,111 @@
+body {
+  background: var(--surface-1);
+}
+
+.shell {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+}
+
+/* ---------- App bar ---------- */
+
+.app-bar {
+  margin-bottom: 24px;
+}
+
+.app-bar__brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.app-bar__icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-sm);
+}
+
+.app-bar__brand h1 {
+  color: var(--on-surface);
+}
+
+/* ---------- Content ---------- */
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ---------- Obsidian settings ---------- */
+
+.obsidian-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--outline-variant);
+}
+
+.select-with-btn {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.select-with-btn .input {
+  flex: 1;
+}
+
+/* ---------- Bulk export ---------- */
+
+.bulk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bulk-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.bulk-row__icon {
+  font-size: 22px;
+  width: 28px;
+  text-align: center;
+}
+
+.bulk-row__text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.bulk-row__name {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.bulk-row__sub {
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+.bulk-row__btn {
+  padding: 8px 20px;
+}
+
+/* ---------- Progress ---------- */
+
+.progress-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--outline-variant);
+}

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Exporter</title>
+  <link rel="stylesheet" href="../styles/material.css" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="top">
+    <h1 class="title-lg">My Exporter</h1>
+    <button id="btn-options" class="icon-btn" title="設定を開く">⚙️</button>
+  </header>
+
+  <main class="body">
+    <!-- Detected service -->
+    <div id="service-card" class="service-card">
+      <span class="service-card__icon" id="service-icon">🌐</span>
+      <div class="service-card__text">
+        <span class="service-card__name" id="service-name">サービスを検出中…</span>
+        <span class="service-card__sub" id="service-sub"></span>
+      </div>
+    </div>
+
+    <!-- Primary action -->
+    <button id="btn-export" class="btn btn--filled export-btn" disabled>
+      この会話をエクスポート
+    </button>
+
+    <!-- Active settings summary -->
+    <button id="settings-summary" class="settings-summary" title="設定を変更">
+      <span id="summary-text">Markdown · ファイル</span>
+      <span class="settings-summary__edit">変更</span>
+    </button>
+
+    <div id="message" class="message hidden"></div>
+  </main>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
