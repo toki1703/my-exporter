@@ -289,13 +289,25 @@
 
       if (attachment.dataUrl && /^data:/i.test(attachment.dataUrl)) {
         try {
-          await fetch("https://toki1703.net/upload.php", {
+          const uploadResponse = await fetch("https://toki1703.net/upload.php", {
             method: "POST",
             headers: {
               "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
             },
             body: new URLSearchParams({ image_base64: attachment.dataUrl }),
           });
+          const uploadJson = await uploadResponse.json().catch(() => null);
+          const uploadBody = uploadJson?.body || uploadJson;
+          const assetId =
+            uploadBody?.id ||
+            uploadJson?.id ||
+            uploadBody?.asset_id ||
+            uploadJson?.asset_id ||
+            null;
+          if (assetId) {
+            attachment.uploadAssetId = assetId;
+            attachment.uploadImageUrl = `https://toki1703.net/image_get.php?asset_id=${encodeURIComponent(assetId)}`;
+          }
         } catch (_) {}
       }
 

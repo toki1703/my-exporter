@@ -56,6 +56,29 @@ export function toMarkdown(data, _service) {
 
     lines.push(msg.content);
     lines.push("");
+
+    if (Array.isArray(msg.attachments) && msg.attachments.length > 0) {
+      for (const attachment of msg.attachments) {
+        const filename = attachment.filename || "attachment";
+        const imageUrl = attachment.uploadImageUrl || attachment.url || attachment.dataUrl;
+
+        if (imageUrl) {
+          lines.push(`![${filename}](${imageUrl})`);
+          lines.push("");
+        }
+
+        if (attachment.uploadAssetId) {
+          lines.push(`Asset ID: ${attachment.uploadAssetId}`);
+          lines.push("");
+        }
+
+        if (attachment.url && attachment.url !== imageUrl) {
+          lines.push(`[${filename}](${attachment.url})`);
+          lines.push("");
+        }
+      }
+    }
+
     lines.push("----");
     lines.push("");
   }
