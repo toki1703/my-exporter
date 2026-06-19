@@ -264,6 +264,15 @@ document.getElementById("btn-claude-all").addEventListener("click", (e) => {
   });
 });
 
+document.getElementById("btn-perplexity-all").addEventListener("click", (e) => {
+  runBulkExport({
+    btn: e.currentTarget,
+    hosts: ["www.perplexity.ai", "perplexity.ai"],
+    openHint: "Perplexity",
+    func: doExportAllPerplexity,
+  });
+});
+
 // =============================================================
 // Self-contained functions injected into the page via executeScript
 // (No closure access — all external values must come via args)
@@ -699,6 +708,205 @@ async function doExportAllClaude(format, dest) {
     }
 
     await sleep(300);
+  }
+
+  sendProgress({ phase: "done", done, errors, total });
+  return { done, errors, total };
+}
+
+// Injected into a Perplexity tab. No closure — all logic is self-contained.
+async function doExportAllPerplexity(format, dest) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const sendProgress = (data) => {
+    try { chrome.runtime.sendMessage({ type: "EXPORT_ALL_PROGRESS", ...data }); } catch (_) {}
+  };
+
+  const BLOCK_TYPES = [
+    "answer_modes", "media_items", "knowledge_cards", "inline_entity_cards",
+    "place_widgets", "finance_widgets", "sports_widgets", "flight_status_widgets",
+    "shopping_widgets", "jobs_widgets", "search_result_widgets",
+    "clarification_responses", "inline_images", "inline_assets",
+    "placeholder_cards", "diff_blocks", "inline_knowledge_cards",
+    "entity_group_v2", "refinement_filters", "canvas_mode", "maps_preview",
+    "answer_tabs", "price_comparison_widgets",
+  ];
+
+  const THREAD_HEADERS = {
+    Accept: "*/*",
+    "Content-Type": "application/json",
+    "x-app-apiclient": "default",
+    "x-app-apiversion": "2.18",
+  };
+
+  // ── List all threads (via service worker to carry SameSite cookies) ────────
+  // Endpoint: POST /rest/thread/list_ask_threads?version=2.18&source=default
+  // Response: array of thread objects directly (no wrapper).
+  //   Each item has: uuid, slug, title, last_query_datetime, total_threads, ...
+  //   total_threads is the grand total embedded in every item.
+  const threads = [];
+  let offset = 0;
+  const limit = 50;
+  let totalThreads = 0;
+
+  while (true) {
+    const listResp = await chrome.runtime.sendMessage({
+      type: "PERPLEXITY_LIST_FETCH",
+      offset,
+      limit,
+    });
+
+    if (!listResp?.ok) {
+      return { error: listResp?.error || "スレッドリストの取得に失敗しました。" };
+    }
+
+    const raw = listResp.data;
+    // The API returns a plain array
+    const page = Array.isArray(raw) ? raw : (raw?.threads ?? []);
+    if (page.length === 0) break;
+
+    threads.push(...page);
+
+    // total_threads is embedded in each item
+    if (totalThreads === 0 && page[0]?.total_threads) {
+      totalThreads = page[0].total_threads;
+    }
+    sendProgress({ phase: "listing", done: threads.length, total: totalThreads || threads.length });
+
+    if (threads.length >= (totalThreads || Infinity) || page.length < limit) break;
+    offset += limit;
+    await sleep(300);
+  }
+
+  if (threads.length === 0) {
+    return { error: "スレッドが見つかりませんでした。Perplexity にログインしていることを確認してください。" };
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  function replaceCitations(text, webResults) {
+    return text.replace(/\[(\d+)\]/g, (match, num) => {
+      const r = webResults[parseInt(num, 10) - 1];
+      if (!r?.url) return match;
+      let domain = r.meta_data?.citation_domain_name || r.meta_data?.domain_name;
+      if (!domain) {
+        try { domain = new URL(r.url).hostname.replace(/^www\./, "").split(".")[0]; } catch (_) {}
+      }
+      return domain ? `[[${parseInt(num, 10) - 1}]](${r.url})` : match;
+    });
+  }
+
+  function extractAssistantContent(blocks) {
+    const webResults = [];
+    for (const block of blocks) {
+      if (block.intended_usage === "web_results") {
+        webResults.push(...(block.web_result_block?.web_results ?? []));
+      }
+    }
+    const parts = [];
+    for (const block of blocks) {
+      if (block.intended_usage === "media_items") {
+        for (const item of block.media_block?.media_items ?? []) {
+          if (item.medium === "image" && item.image) parts.push(`![image](${item.image})`);
+        }
+      } else if (block.intended_usage === "ask_text") {
+        const answer = block.markdown_block?.answer;
+        if (answer?.trim()) parts.push(replaceCitations(answer.trim(), webResults));
+        for (const item of block.markdown_block?.media_items ?? []) {
+          if (item.medium === "image" && item.image) parts.push(`![image](${item.image})`);
+        }
+      }
+    }
+    return parts.join("\n\n");
+  }
+
+  // ── Export each thread ─────────────────────────────────────────────────────
+
+  const total = threads.length;
+  const folder = `perplexity_${new Date().toISOString().slice(0, 10)}`;
+  let done = 0;
+  let errors = 0;
+
+  for (const thread of threads) {
+    // uuid == slug in the list response
+    const threadId = thread.uuid || thread.slug;
+    const threadTitle = thread.title || thread.query_str || "Perplexity Export";
+    const threadTs = thread.last_query_datetime || undefined;
+
+    sendProgress({ phase: "exporting", done, total, currentTitle: threadTitle });
+
+    try {
+      if (!threadId) throw new Error("thread ID なし");
+
+      const params = new URLSearchParams({
+        with_parent_info: "true",
+        with_schematized_response: "true",
+        version: "2.18",
+        source: "default",
+        limit: "10",
+        offset: "0",
+        from_first: "true",
+      });
+      BLOCK_TYPES.forEach((t) => params.append("supported_block_use_cases", t));
+
+      const r = await fetch(
+        `https://www.perplexity.ai/rest/thread/${threadId}?${params}`,
+        { method: "GET", credentials: "include", headers: THREAD_HEADERS }
+      );
+      if (!r.ok) throw new Error(`${r.status}`);
+      const data = await r.json();
+
+      const messages = [];
+      for (const entry of data?.entries ?? []) {
+        const ts = entry.entry_updated_datetime || entry.updated_datetime || undefined;
+        if (entry.query_str?.trim()) {
+          messages.push({ role: "user", content: entry.query_str.trim(), timestamp: ts });
+        }
+        const content = extractAssistantContent(entry.blocks ?? []);
+        if (content) messages.push({ role: "assistant", content, timestamp: ts });
+      }
+
+      const sources = [];
+      const seenUrls = new Set();
+      for (const entry of data?.entries ?? []) {
+        for (const block of entry.blocks ?? []) {
+          if (block.intended_usage === "web_results") {
+            for (const wr of block.web_result_block?.web_results ?? []) {
+              if (wr.url && !seenUrls.has(wr.url)) {
+                seenUrls.add(wr.url);
+                sources.push({ title: wr.name || wr.url, url: wr.url });
+              }
+            }
+          }
+        }
+      }
+
+      const title =
+        data?.entries?.find((e) => e.thread_title)?.thread_title || threadTitle;
+
+      const result = await chrome.runtime.sendMessage({
+        type: "EXPORT",
+        format,
+        dest,
+        folder,
+        data: {
+          service: "perplexity",
+          title,
+          exportedAt: new Date().toISOString(),
+          chatTime: messages.find((m) => m.timestamp)?.timestamp || threadTs,
+          url: `https://www.perplexity.ai/search/${threadId}`,
+          messages,
+          sources,
+        },
+      });
+
+      if (result?.ok) done++;
+      else errors++;
+    } catch (_) {
+      errors++;
+    }
+
+    await sleep(400);
   }
 
   sendProgress({ phase: "done", done, errors, total });

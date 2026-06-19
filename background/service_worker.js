@@ -41,6 +41,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
+// Perplexity thread-list fetch — must run from the service worker because
+// the /rest/user/threads endpoint sets SameSite=Strict cookies that a content
+// script context cannot include in cross-origin requests from the extension.
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type !== "PERPLEXITY_LIST_FETCH") return false;
+
+  fetchPerplexityThreadList(message).then(sendResponse).catch((err) => {
+    sendResponse({ ok: false, error: err.message });
+  });
+
+  return true;
+});
+
 async function fetchGeminiTurns({ convId, at, sid, bl, uPrefix, hl }) {
   const prefix = uPrefix || "";
 
@@ -79,6 +92,43 @@ async function fetchGeminiTurns({ convId, at, sid, bl, uPrefix, hl }) {
   }
 
   return { ok: true, text: await resp.text() };
+}
+
+async function fetchPerplexityThreadList({ offset, limit }) {
+  const pageLimit = limit ?? 50;
+  const pageOffset = offset ?? 0;
+
+  const url = "https://www.perplexity.ai/rest/thread/list_ask_threads?version=2.18&source=default";
+
+  const resp = await fetch(url, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      Accept: "*/*",
+      "Content-Type": "application/json",
+      "x-app-apiclient": "default",
+      "x-app-apiversion": "2.18",
+      "x-perplexity-request-endpoint": url,
+      "x-perplexity-request-reason": "library-threads",
+      "x-perplexity-request-try-number": "1",
+      "x-request-id": crypto.randomUUID(),
+    },
+    body: JSON.stringify({
+      limit: pageLimit,
+      ascending: false,
+      offset: pageOffset,
+      search_term: "",
+      exclude_asi: false,
+      include_assets: true,
+    }),
+  });
+
+  if (!resp.ok) {
+    return { ok: false, error: `Perplexity スレッドリスト取得エラー: ${resp.status}` };
+  }
+
+  const data = await resp.json();
+  return { ok: true, data };
 }
 
 function sanitizeFilename(str) {
