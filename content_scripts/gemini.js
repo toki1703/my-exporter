@@ -131,8 +131,9 @@
     // data[0] = array of turns. Gemini returns them NEWEST-FIRST, so we sort by
     // the per-turn timestamp (the turn's last element: [seconds, nanos]) to get
     // chronological order.
-    //   turn[2][0][0]    = user message text
-    //   turn[3][0][0][1] = model response text parts array
+    //   turn[2][0][0]       = user message text
+    //   turn[3][0][0][1]    = model response text parts array
+    //   turn[3][0][0][37][0][0] = thinking content parts array (Gemini 2.0+ Flash Thinking)
     const rawTurns = data?.[0];
     if (!Array.isArray(rawTurns)) return [];
 
@@ -153,13 +154,33 @@
         ? modelParts.filter(s => typeof s === "string").join("")
         : (typeof modelParts === "string" ? modelParts : null);
 
+      // Thinking content (Gemini Flash Thinking / 2.0+ models)
+      const thinkingParts = turn?.[3]?.[0]?.[0]?.[37]?.[0]?.[0];
+      const thinkingText = Array.isArray(thinkingParts)
+        ? thinkingParts.filter(s => typeof s === "string").join("").trim()
+        : null;
+
       if (typeof userText === "string" && userText.trim())
         messages.push({ role: "user", content: userText.trim(), timestamp });
-      if (modelText?.trim())
-        messages.push({ role: "assistant", content: modelText.trim(), timestamp });
+
+      if (modelText?.trim()) {
+        const cleaned = removeCitations(modelText.trim());
+        const content = thinkingText
+          ? `<details><summary>Thinking</summary>\n\n${thinkingText}\n\n</details>\n\n${cleaned}`
+          : cleaned;
+        messages.push({ role: "assistant", content, timestamp });
+      }
     }
 
     return messages;
+  }
+
+  // Remove Gemini citation markers: [cite_start] and [cite: ...]
+  function removeCitations(text) {
+    if (!text.includes("[cite_start]") && !text.includes("[cite:")) return text;
+    return text
+      .replace(/\[cite_start\]/g, "")
+      .replace(/\[cite:\s*[^\]]+\]/g, "");
   }
 
   // Slice a balanced JSON value (array or object) from text[pos].

@@ -1,55 +1,163 @@
-// Perplexity (perplexity.ai) collector
+// Perplexity (perplexity.ai) collector — REST API based
+// Fetches from /rest/thread/{id} instead of DOM scraping.
 
 (function () {
-  const { register, cleanText } = window.__myExporter;
+  const { register } = window.__myExporter;
 
   register("perplexity", async () => {
-    // Perplexity renders Q&A in pairs.
-    // User questions are in .query or similar; answers in .prose or .answer containers.
-    // NOTE: Selectors are brittle — Perplexity's class names are often hashed.
-    // Using structural selectors as a fallback.
-
-    // Try to find question/answer pairs via data attributes first
-    const questionEls = Array.from(
-      document.querySelectorAll('[data-testid="query"], .query-text')
-    );
-    const answerEls = Array.from(
-      document.querySelectorAll('[data-testid="answer"], .prose')
-    );
-
-    if (questionEls.length === 0 && answerEls.length === 0) {
+    // Conversation ID from URL: /search/{id}
+    const convId = location.pathname.match(/\/search\/([^/?#]+)/)?.[1];
+    if (!convId) {
       throw new Error(
-        "会話が見つかりません。Perplexity の質問ページを開いてください。"
+        "会話が見つかりません。Perplexity の検索ページを開いてください（URLに /search/ が含まれる必要があります）。"
       );
     }
 
-    const length = Math.max(questionEls.length, answerEls.length);
-    const messages = [];
+    const data = await fetchThread(convId);
 
-    for (let i = 0; i < length; i++) {
-      if (questionEls[i]) {
-        messages.push({ role: "user", content: cleanText(questionEls[i]) });
+    if (!Array.isArray(data?.entries) || data.entries.length === 0) {
+      throw new Error("会話データが見つかりませんでした。");
+    }
+
+    const messages = [];
+    for (const entry of data.entries) {
+      const ts = entry.entry_updated_datetime || entry.updated_datetime || undefined;
+
+      if (entry.query_str?.trim()) {
+        messages.push({ role: "user", content: entry.query_str.trim(), timestamp: ts });
       }
-      if (answerEls[i]) {
-        messages.push({ role: "assistant", content: cleanText(answerEls[i]) });
+
+      const content = extractAssistantContent(entry.blocks ?? []);
+      if (content) {
+        messages.push({ role: "assistant", content, timestamp: ts });
       }
     }
 
-    // Collect sources / citations
-    const sources = Array.from(document.querySelectorAll(".source-item a, [class*='source'] a"))
-      .map((a) => ({ title: a.textContent.trim(), url: a.href }))
-      .filter((s) => s.title && s.url);
+    if (messages.length === 0) {
+      throw new Error("会話が見つかりません。Perplexity の質問ページを開いてください。");
+    }
 
-    const titleEl = document.querySelector("h1, [class*='title']");
-    const title = titleEl?.textContent?.trim() ?? "Perplexity Export";
+    // Collect cited sources (deduplicated)
+    const sources = [];
+    const seenUrls = new Set();
+    for (const entry of data.entries) {
+      for (const block of entry.blocks ?? []) {
+        if (block.intended_usage === "web_results") {
+          for (const r of block.web_result_block?.web_results ?? []) {
+            if (r.url && !seenUrls.has(r.url)) {
+              seenUrls.add(r.url);
+              sources.push({ title: r.name || r.url, url: r.url });
+            }
+          }
+        }
+      }
+    }
+
+    const title =
+      data.entries.find((e) => e.thread_title)?.thread_title ||
+      document.title.replace(/\s*[-–|]\s*Perplexity\s*$/i, "").trim() ||
+      "Perplexity Export";
 
     return {
       service: "perplexity",
       title,
       exportedAt: new Date().toISOString(),
+      chatTime: messages.find((m) => m.timestamp)?.timestamp,
       url: location.href,
       messages,
       sources,
     };
   });
+
+  // ── Fetch /rest/thread/{id} ─────────────────────────────────────────────────
+  // Content script runs on perplexity.ai, so this is same-origin. cookies sent.
+
+  async function fetchThread(convId) {
+    const BLOCK_TYPES = [
+      "answer_modes", "media_items", "knowledge_cards", "inline_entity_cards",
+      "place_widgets", "finance_widgets", "sports_widgets", "flight_status_widgets",
+      "shopping_widgets", "jobs_widgets", "search_result_widgets",
+      "clarification_responses", "inline_images", "inline_assets",
+      "placeholder_cards", "diff_blocks", "inline_knowledge_cards",
+      "entity_group_v2", "refinement_filters", "canvas_mode", "maps_preview",
+      "answer_tabs", "price_comparison_widgets",
+    ];
+
+    const params = new URLSearchParams({
+      with_parent_info: "true",
+      with_schematized_response: "true",
+      version: "2.18",
+      source: "default",
+      limit: "10",
+      offset: "0",
+      from_first: "true",
+    });
+    BLOCK_TYPES.forEach((t) => params.append("supported_block_use_cases", t));
+
+    const resp = await fetch(
+      `https://www.perplexity.ai/rest/thread/${convId}?${params}`,
+      {
+        method: "GET",
+        credentials: "include",
+        headers: {
+          Accept: "*/*",
+          "Content-Type": "application/json",
+          "x-app-apiclient": "default",
+          "x-app-apiversion": "2.18",
+        },
+      }
+    );
+
+    if (!resp.ok) {
+      throw new Error(`Perplexity API エラー: ${resp.status}`);
+    }
+    return resp.json();
+  }
+
+  // ── Extract assistant text content from entry blocks ───────────────────────
+
+  function extractAssistantContent(blocks) {
+    // Build web_results list for citation replacement
+    const webResults = [];
+    for (const block of blocks) {
+      if (block.intended_usage === "web_results") {
+        webResults.push(...(block.web_result_block?.web_results ?? []));
+      }
+    }
+
+    // Replace [n] citation markers with markdown links
+    const replaceCitations = (text) =>
+      text.replace(/\[(\d+)\]/g, (match, num) => {
+        const r = webResults[parseInt(num, 10) - 1];
+        if (!r?.url) return match;
+        let domain = r.meta_data?.citation_domain_name || r.meta_data?.domain_name;
+        if (!domain) {
+          try {
+            domain = new URL(r.url).hostname.replace(/^www\./, "").split(".")[0];
+          } catch (_) {}
+        }
+        return domain ? `[[${parseInt(num, 10) - 1}]](${r.url})` : match;
+      });
+
+    const parts = [];
+    for (const block of blocks) {
+      if (block.intended_usage === "media_items") {
+        for (const item of block.media_block?.media_items ?? []) {
+          if (item.medium === "image" && item.image) {
+            parts.push(`![image](${item.image})`);
+          }
+        }
+      } else if (block.intended_usage === "ask_text") {
+        const answer = block.markdown_block?.answer;
+        if (answer?.trim()) parts.push(replaceCitations(answer.trim()));
+        for (const item of block.markdown_block?.media_items ?? []) {
+          if (item.medium === "image" && item.image) {
+            parts.push(`![image](${item.image})`);
+          }
+        }
+      }
+    }
+
+    return parts.join("\n\n");
+  }
 })();
