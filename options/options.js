@@ -273,6 +273,15 @@ document.getElementById("btn-perplexity-all").addEventListener("click", (e) => {
   });
 });
 
+document.getElementById("btn-gemini-all").addEventListener("click", (e) => {
+  runBulkExport({
+    btn: e.currentTarget,
+    hosts: ["gemini.google.com"],
+    openHint: "Gemini",
+    func: doExportAllGemini,
+  });
+});
+
 // =============================================================
 // Self-contained functions injected into the page via executeScript
 // (No closure access — all external values must come via args)
@@ -889,4 +898,255 @@ async function doExportAllPerplexity(format, dest) {
 
   sendProgress({ phase: "done", done, errors, total });
   return { done, errors, total };
+}
+
+async function doExportAllGemini(format, dest) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const sendProgress = (data) => {
+    try { chrome.runtime.sendMessage({ type: "EXPORT_ALL_PROGRESS", ...data }); } catch (_) {}
+  };
+
+  const wiz = readWizData();
+  const at  = wiz?.SNlM0e;
+  const sid = wiz?.FdrFJe;
+  const bl  = wiz?.cfb2h;
+
+  if (!at || !bl) {
+    return { error: "認証トークンが見つかりません。ページをリロードしてから再試行してください。" };
+  }
+
+  const uPrefix = location.pathname.match(/^(\/u\/\d+)/)?.[1] ?? "";
+
+  sendProgress({ phase: "listing", done: 0, total: 0 });
+
+  const recentResp = await new Promise((resolve) => {
+    chrome.runtime.sendMessage({
+      type: "GEMINI_LIST_FETCH",
+      at, sid, bl, uPrefix, isPinned: false,
+      hl: navigator.language || "ja"
+    }, resolve);
+  });
+
+  const pinnedResp = await new Promise((resolve) => {
+    chrome.runtime.sendMessage({
+      type: "GEMINI_LIST_FETCH",
+      at, sid, bl, uPrefix, isPinned: true,
+      hl: navigator.language || "ja"
+    }, resolve);
+  });
+
+  const chatsMap = new Map();
+  if (pinnedResp?.ok && pinnedResp.text) {
+    const items = parseListResponse(pinnedResp.text);
+    for (const item of items) chatsMap.set(item.id, item);
+  }
+  if (recentResp?.ok && recentResp.text) {
+    const items = parseListResponse(recentResp.text);
+    for (const item of items) {
+      if (!chatsMap.has(item.id)) chatsMap.set(item.id, item);
+    }
+  }
+  const items = Array.from(chatsMap.values());
+
+  sendProgress({ phase: "listing", done: items.length, total: items.length });
+  if (items.length === 0) {
+    return { error: "会話が見つかりませんでした。" };
+  }
+
+  const total = items.length;
+  const folder = `gemini_${new Date().toISOString().slice(0, 10)}`;
+  let done = 0;
+  let errors = 0;
+
+  for (const item of items) {
+    const convId = item.id.replace(/^c_/, "");
+    sendProgress({ phase: "exporting", done, total, currentTitle: item.title });
+
+    try {
+      const resp = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: "GEMINI_FETCH",
+          convId,
+          at, sid, bl, uPrefix,
+          hl: navigator.language || "ja"
+        }, resolve);
+      });
+
+      if (!resp?.ok) throw new Error(resp?.error || "Fetch failed");
+
+      const messages = parseResponse(resp.text);
+
+      const result = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: "EXPORT",
+          service: "gemini",
+          format,
+          dest,
+          folder,
+          data: {
+            service: "gemini",
+            title: item.title,
+            exportedAt: new Date().toISOString(),
+            chatTime: item.timestamp || messages.find(m => m.timestamp)?.timestamp,
+            url: `https://gemini.google.com${uPrefix}/app/${convId}`,
+            messages,
+          }
+        }, resolve);
+      });
+
+      if (result?.ok) done++;
+      else errors++;
+    } catch (_) {
+      errors++;
+    }
+
+    await sleep(300);
+  }
+
+  sendProgress({ phase: "done", done, errors, total });
+  return { done, errors, total };
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  function readWizData() {
+    for (const script of document.querySelectorAll("script:not([src])")) {
+      const text = script.textContent;
+      const idx = text.indexOf("WIZ_global_data");
+      if (idx === -1) continue;
+      const eqIdx = text.indexOf("=", idx);
+      if (eqIdx === -1) continue;
+      const braceIdx = text.indexOf("{", eqIdx);
+      if (braceIdx === -1) continue;
+      const jsonStr = sliceBalanced(text, braceIdx);
+      if (!jsonStr) continue;
+      try { return JSON.parse(jsonStr); } catch (_) { continue; }
+    }
+    return null;
+  }
+
+  function parseListResponse(text) {
+    const start = text.indexOf("[");
+    if (start === -1) return [];
+
+    const envStr = sliceBalanced(text, start);
+    if (!envStr) return [];
+
+    let envelope;
+    try { envelope = JSON.parse(envStr); }
+    catch (_) { return []; }
+
+    const entry = envelope.find(e => Array.isArray(e) && e[0] === "wrb.fr" && e[1] === "MaZiqc");
+    if (!entry) return [];
+
+    let data;
+    try { data = JSON.parse(entry[2]); }
+    catch (_) { return []; }
+
+    const chatList = data?.[2];
+    if (!Array.isArray(chatList)) return [];
+
+    const items = [];
+    for (const chatData of chatList) {
+      if (Array.isArray(chatData) && chatData.length > 1) {
+        const cid = chatData[0];
+        const title = chatData[1];
+        const timestampData = chatData[5];
+        let timestamp = undefined;
+        if (Array.isArray(timestampData) && typeof timestampData[0] === "number") {
+          timestamp = new Date(timestampData[0] * 1000).toISOString();
+        }
+        if (cid && typeof cid === "string") {
+          items.push({ id: cid, title: title || "Untitled", timestamp });
+        }
+      }
+    }
+    return items;
+  }
+
+  function parseResponse(text) {
+    const start = text.indexOf("[");
+    if (start === -1) throw new Error("API レスポンスのパースに失敗しました。");
+
+    const envStr = sliceBalanced(text, start);
+    if (!envStr) throw new Error("API レスポンスのパースに失敗しました。");
+
+    let envelope;
+    try { envelope = JSON.parse(envStr); }
+    catch (_) { throw new Error("API レスポンスのパースに失敗しました。"); }
+
+    const entry = envelope.find(e => Array.isArray(e) && e[0] === "wrb.fr" && e[1] === "hNvQHb");
+    if (!entry) throw new Error("会話データが見つかりませんでした。");
+
+    let data;
+    try { data = JSON.parse(entry[2]); }
+    catch (_) { throw new Error("会話データのパースに失敗しました。"); }
+
+    const rawTurns = data?.[0];
+    if (!Array.isArray(rawTurns)) return [];
+
+    const turns = rawTurns
+      .map((turn) => {
+        const tsArr = turn?.[turn.length - 1];
+        const tsSec = Array.isArray(tsArr) && typeof tsArr[0] === "number" ? tsArr[0] : null;
+        return { turn, tsSec };
+      })
+      .sort((a, b) => (a.tsSec ?? 0) - (b.tsSec ?? 0));
+
+    const messages = [];
+    for (const { turn, tsSec } of turns) {
+      const timestamp = tsSec ? new Date(tsSec * 1000).toISOString() : undefined;
+      const userText  = turn?.[2]?.[0]?.[0];
+      const modelParts = turn?.[3]?.[0]?.[0]?.[1];
+      const modelText = Array.isArray(modelParts)
+        ? modelParts.filter(s => typeof s === "string").join("")
+        : (typeof modelParts === "string" ? modelParts : null);
+
+      const thinkingParts = turn?.[3]?.[0]?.[0]?.[37]?.[0]?.[0];
+      const thinkingText = Array.isArray(thinkingParts)
+        ? thinkingParts.filter(s => typeof s === "string").join("").trim()
+        : null;
+
+      if (typeof userText === "string" && userText.trim())
+        messages.push({ role: "user", content: userText.trim(), timestamp });
+
+      if (modelText?.trim()) {
+        const cleaned = removeCitations(modelText.trim());
+        const content = thinkingText
+          ? `<details><summary>Thinking</summary>\n\n${thinkingText}\n\n</details>\n\n${cleaned}`
+          : cleaned;
+        messages.push({ role: "assistant", content, timestamp });
+      }
+    }
+
+    return messages;
+  }
+
+  function removeCitations(text) {
+    if (!text.includes("[cite_start]") && !text.includes("[cite:")) return text;
+    return text
+      .replace(/\[cite_start\]/g, "")
+      .replace(/\[cite:\s*[^\]]+\]/g, "");
+  }
+
+  function sliceBalanced(text, pos) {
+    const OPEN = text[pos];
+    if (OPEN !== "[" && OPEN !== "{") return null;
+    const CLOSE = OPEN === "[" ? "]" : "}";
+    let depth = 0, inStr = false;
+    for (let i = pos; i < text.length; i++) {
+      const c = text[i];
+      if (inStr) {
+        if (c === "\\") i++;
+        else if (c === '"') inStr = false;
+      } else if (c === '"') {
+        inStr = true;
+      } else if (c === OPEN) {
+        depth++;
+      } else if (c === CLOSE && --depth === 0) {
+        return text.slice(pos, i + 1);
+      }
+    }
+    return null;
+  }
 }

@@ -41,6 +41,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type !== "GEMINI_LIST_FETCH") return false;
+
+  fetchGeminiList(message).then(sendResponse).catch((err) => {
+    sendResponse({ ok: false, error: err.message });
+  });
+
+  return true;
+});
+
 // Perplexity thread-list fetch — must run from the service worker because
 // the /rest/user/threads endpoint sets SameSite=Strict cookies that a content
 // script context cannot include in cross-origin requests from the extension.
@@ -70,6 +80,45 @@ async function fetchGeminiTurns({ convId, at, sid, bl, uPrefix, hl }) {
   // numTurns=1000 requests the full history in one call.
   const fReq = JSON.stringify([[
     ["hNvQHb", JSON.stringify([`c_${convId}`, 1000, null, 1, [0], [4], null, 1]), null, "generic"],
+  ]]);
+
+  const body = new URLSearchParams({ "f.req": fReq, at });
+
+  const resp = await fetch(
+    `https://gemini.google.com${prefix}/_/BardChatUi/data/batchexecute?${params}`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "x-same-domain": "1",
+      },
+      body: body.toString(),
+    }
+  );
+
+  if (!resp.ok) {
+    return { ok: false, error: `Gemini API エラー: ${resp.status}` };
+  }
+
+  return { ok: true, text: await resp.text() };
+}
+
+async function fetchGeminiList({ at, sid, bl, uPrefix, hl, isPinned }) {
+  const prefix = uPrefix || "";
+
+  const params = new URLSearchParams({
+    rpcids: "MaZiqc",
+    "source-path": `${prefix}/`,
+    bl,
+    "f.sid": sid || "",
+    hl: hl || "ja",
+    rt: "c",
+  });
+
+  const flag = isPinned ? 1 : 0;
+  const fReq = JSON.stringify([[
+    ["MaZiqc", JSON.stringify([150, null, [flag, null, 1]]), null, "generic"],
   ]]);
 
   const body = new URLSearchParams({ "f.req": fReq, at });
