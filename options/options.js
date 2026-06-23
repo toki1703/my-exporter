@@ -57,7 +57,7 @@ function updateProgress({ phase, done = 0, total = 0, currentTitle = "" }) {
   const count = document.getElementById("progress-count");
   const fill  = document.getElementById("progress-fill");
 
-  count.textContent = total > 0 ? `${done} / ${total}` : "";
+  count.textContent = (phase !== "listing" && total > 0) ? `${done} / ${total}` : "";
 
   if (phase === "listing") {
     label.textContent = "会話リストを取得中...";
