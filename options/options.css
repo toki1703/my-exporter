@@ -102,6 +102,18 @@ body {
   padding: 8px 20px;
 }
 
+/* ---------- Bulk all ---------- */
+
+.bulk-all-row {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--outline-variant);
+}
+
+.bulk-all-btn {
+  width: 100%;
+}
+
 /* ---------- Jobs section ---------- */
 
 .jobs-list {

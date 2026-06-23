@@ -295,43 +295,48 @@ async function findServiceTab(hosts) {
   });
 }
 
-async function runBulkExport({ btn, hosts, openHint, func, service }) {
-  if (btn.disabled) return;
-
-  btn.disabled = true;
-  btn.textContent = "実行中…";
-  hideMessage();
-
+async function _runExport({ hosts, openHint, func, service }) {
   let jobId = null;
   try {
     const tab = await findServiceTab(hosts);
     if (!tab) throw new Error(`${openHint} のタブを開いてから実行してください`);
-
     jobId = `${service}-${Date.now()}`;
     createJobCard(jobId, service);
-
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func,
       args: [selectedFormat, selectedDest, jobId],
     });
-
     const result = results?.[0]?.result;
     if (result?.error) throw new Error(result.error);
-
-    const errNote = result?.errors > 0 ? `（エラー: ${result.errors} 件）` : "";
-    const destNote = selectedDest === "obsidian" ? "Obsidian" : "Downloads/my-exporter/";
-    showMessage(`${result?.done} 件エクスポート完了！${errNote} → ${destNote}`, "success");
+    return result;
   } catch (err) {
-    showMessage(err.message, "error");
     if (jobId) {
       const lbl = document.getElementById(`jlbl-${jobId}`);
       if (lbl) lbl.textContent = `エラー: ${err.message}`;
     }
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "実行";
+    return { error: err.message };
   }
+}
+
+async function runBulkExport({ btn, hosts, openHint, func, service }) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = "実行中…";
+  hideMessage();
+
+  const result = await _runExport({ hosts, openHint, func, service });
+
+  if (!result?.error) {
+    const errNote = (result?.errors ?? 0) > 0 ? `（エラー: ${result.errors} 件）` : "";
+    const destNote = selectedDest === "obsidian" ? "Obsidian" : "Downloads/my-exporter/";
+    showMessage(`${result?.done} 件エクスポート完了！${errNote} → ${destNote}`, "success");
+  } else {
+    showMessage(result.error, "error");
+  }
+
+  btn.disabled = false;
+  btn.textContent = "実行";
 }
 
 document.getElementById("btn-chatgpt-all").addEventListener("click", (e) => {
@@ -372,6 +377,28 @@ document.getElementById("btn-gemini-all").addEventListener("click", (e) => {
     func: doExportAllGemini,
     service: "gemini",
   });
+});
+
+document.getElementById("btn-all").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  if (btn.disabled) return;
+
+  const individualIds = ["btn-chatgpt-all", "btn-claude-all", "btn-perplexity-all", "btn-gemini-all"];
+  btn.disabled = true;
+  btn.textContent = "実行中…";
+  individualIds.forEach((id) => { document.getElementById(id).disabled = true; });
+  hideMessage();
+
+  await Promise.all([
+    _runExport({ hosts: ["chatgpt.com", "chat.openai.com"],          openHint: "ChatGPT",    func: doExportAll,            service: "chatgpt" }),
+    _runExport({ hosts: ["claude.ai"],                               openHint: "Claude",      func: doExportAllClaude,      service: "claude" }),
+    _runExport({ hosts: ["www.perplexity.ai", "perplexity.ai"],      openHint: "Perplexity", func: doExportAllPerplexity,  service: "perplexity" }),
+    _runExport({ hosts: ["gemini.google.com"],                       openHint: "Gemini",      func: doExportAllGemini,      service: "gemini" }),
+  ]);
+
+  btn.disabled = false;
+  btn.textContent = "全プロバイダーを一括エクスポート";
+  individualIds.forEach((id) => { document.getElementById(id).disabled = false; });
 });
 
 // =============================================================
