@@ -44,95 +44,115 @@ function hideMessage() {
   document.getElementById("message").className = "message hidden";
 }
 
-function showProgress() {
-  document.getElementById("progress-section").classList.remove("hidden");
-}
+// --- Job management ---
 
-function hideProgress() {
-  document.getElementById("progress-section").classList.add("hidden");
-}
+const JOB_META = {
+  chatgpt:    { name: "ChatGPT",    icon: "💬" },
+  claude:     { name: "Claude",     icon: "🤖" },
+  perplexity: { name: "Perplexity", icon: "🔮" },
+  gemini:     { name: "Gemini",     icon: "✨" },
+};
 
-// --- Chat list ---
+const _jobs = new Map();
 
-const _cl = { items: [] };
-
-function _clEscHtml(s) {
+function _escHtml(s) {
   return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
-function resetChatList() {
-  _cl.items = [];
-  document.getElementById("chat-list").innerHTML = "";
-  document.getElementById("chat-list-details").classList.add("hidden");
-  document.getElementById("chat-list-count").textContent = "";
+function createJobCard(jobId, service) {
+  const meta = JOB_META[service] || { name: service, icon: "📤" };
+  const div = document.createElement("div");
+  div.className = "job-card";
+  div.innerHTML =
+    `<div class="job-card__header">` +
+      `<span class="job-card__icon">${meta.icon}</span>` +
+      `<div class="job-card__text">` +
+        `<span class="job-card__name">${meta.name}</span>` +
+        `<span class="job-card__label" id="jlbl-${jobId}">リスト取得中...</span>` +
+      `</div>` +
+      `<span class="job-card__count" id="jcnt-${jobId}"></span>` +
+    `</div>` +
+    `<div class="job-card__bar">` +
+      `<div class="progress-track"><div class="progress-fill" id="jfil-${jobId}" style="width:5%"></div></div>` +
+    `</div>` +
+    `<details class="chat-list-details hidden" id="jdet-${jobId}">` +
+      `<summary class="chat-list-summary">` +
+        `<span class="chat-list-summary__arrow">▶</span>` +
+        `<span class="chat-list-summary__label">チャット一覧</span>` +
+        `<span class="chat-list-summary__count" id="jclc-${jobId}"></span>` +
+      `</summary>` +
+      `<ul class="chat-list" id="jcl-${jobId}"></ul>` +
+    `</details>`;
+  document.getElementById("jobs-list").appendChild(div);
+  document.getElementById("jobs-section").classList.remove("hidden");
+  _jobs.set(jobId, { clItems: [] });
 }
 
-function _clAddItems(titles) {
-  const ul = document.getElementById("chat-list");
+function updateJobProgress(jobId, { phase, done = 0, total = 0, currentTitle = "", newTitles, currentIndex, prevIndex, prevOk }) {
+  if (!_jobs.has(jobId)) return;
+  const lbl = document.getElementById(`jlbl-${jobId}`);
+  const cnt = document.getElementById(`jcnt-${jobId}`);
+  const fil = document.getElementById(`jfil-${jobId}`);
+
+  cnt.textContent = (phase !== "listing" && total > 0) ? `${done} / ${total}` : "";
+
+  if (phase === "listing") {
+    lbl.textContent = "リスト取得中...";
+    fil.style.width = total > 0 ? `${(done / total) * 20}%` : "5%";
+    if (newTitles?.length) _jobAddItems(jobId, newTitles);
+  } else if (phase === "exporting") {
+    const short = currentTitle ? `「${currentTitle.slice(0, 24)}」` : "";
+    lbl.textContent = short ? `${short} をエクスポート中` : "エクスポート中...";
+    fil.style.width = total > 0 ? `${20 + (done / total) * 80}%` : "20%";
+    if (typeof prevIndex === "number" && prevIndex >= 0) _jobSetStatus(jobId, prevIndex, prevOk === false ? "error" : "ok");
+    if (typeof currentIndex === "number" && currentIndex >= 0) _jobSetStatus(jobId, currentIndex, "active");
+    _jobUpdateCount(jobId);
+  } else if (phase === "done") {
+    lbl.textContent = "完了";
+    fil.style.width = "100%";
+    if (typeof prevIndex === "number" && prevIndex >= 0) _jobSetStatus(jobId, prevIndex, prevOk === false ? "error" : "ok");
+    _jobUpdateCount(jobId);
+  }
+}
+
+function _jobAddItems(jobId, titles) {
+  const job = _jobs.get(jobId);
+  if (!job) return;
+  const ul = document.getElementById(`jcl-${jobId}`);
   for (const title of titles) {
     const li = document.createElement("li");
     li.className = "chat-list__item";
     li.innerHTML =
       `<span class="chat-item-status chat-item-status--pending">–</span>` +
-      `<span class="chat-item-title" title="${_clEscHtml(title)}">${_clEscHtml(title)}</span>`;
+      `<span class="chat-item-title" title="${_escHtml(title)}">${_escHtml(title)}</span>`;
     ul.appendChild(li);
-    _cl.items.push({ title, el: li });
+    job.clItems.push({ el: li });
   }
-  if (_cl.items.length > 0) {
-    document.getElementById("chat-list-details").classList.remove("hidden");
-    _clUpdateCount();
+  if (job.clItems.length > 0) {
+    document.getElementById(`jdet-${jobId}`)?.classList.remove("hidden");
+    _jobUpdateCount(jobId);
   }
 }
 
-function _clSetStatus(idx, status) {
-  const item = _cl.items[idx];
+function _jobSetStatus(jobId, idx, status) {
+  const item = _jobs.get(jobId)?.clItems[idx];
   if (!item) return;
   const statusEl = item.el.querySelector(".chat-item-status");
   statusEl.className = `chat-item-status chat-item-status--${status}`;
   statusEl.textContent = { pending: "–", active: "⟳", ok: "✓", error: "✗" }[status] ?? "–";
   item.el.classList.toggle("chat-list__item--active", status === "active");
-  if (status === "active" && document.getElementById("chat-list-details")?.open) {
+  if (status === "active" && document.getElementById(`jdet-${jobId}`)?.open) {
     item.el.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 }
 
-function _clUpdateCount() {
-  const total = _cl.items.length;
-  const done  = _cl.items.filter((i) => i.el.querySelector(".chat-item-status--ok, .chat-item-status--error")).length;
-  document.getElementById("chat-list-count").textContent =
-    total > 0 ? (done > 0 ? `${done} / ${total} 件` : `${total} 件`) : "";
-}
-
-function updateProgress({ phase, done = 0, total = 0, currentTitle = "", newTitles, currentIndex, prevIndex, prevOk }) {
-  const label = document.getElementById("progress-label");
-  const count = document.getElementById("progress-count");
-  const fill  = document.getElementById("progress-fill");
-
-  count.textContent = (phase !== "listing" && total > 0) ? `${done} / ${total}` : "";
-
-  if (phase === "listing") {
-    label.textContent = "会話リストを取得中...";
-    fill.style.width = total > 0 ? `${(done / total) * 20}%` : "5%";
-    if (newTitles?.length) _clAddItems(newTitles);
-  } else if (phase === "exporting") {
-    const short = currentTitle ? `「${currentTitle.slice(0, 24)}」` : "";
-    label.textContent = short ? `${short} をエクスポート中` : "エクスポート中...";
-    fill.style.width = total > 0 ? `${20 + (done / total) * 80}%` : "20%";
-    if (typeof prevIndex === "number" && prevIndex >= 0) {
-      _clSetStatus(prevIndex, prevOk === false ? "error" : "ok");
-    }
-    if (typeof currentIndex === "number" && currentIndex >= 0) {
-      _clSetStatus(currentIndex, "active");
-    }
-    _clUpdateCount();
-  } else if (phase === "done") {
-    label.textContent = "完了";
-    fill.style.width = "100%";
-    if (typeof prevIndex === "number" && prevIndex >= 0) {
-      _clSetStatus(prevIndex, prevOk === false ? "error" : "ok");
-    }
-    _clUpdateCount();
-  }
+function _jobUpdateCount(jobId) {
+  const job = _jobs.get(jobId);
+  if (!job) return;
+  const total = job.clItems.length;
+  const done  = job.clItems.filter((i) => i.el.querySelector(".chat-item-status--ok, .chat-item-status--error")).length;
+  const el = document.getElementById(`jclc-${jobId}`);
+  if (el) el.textContent = total > 0 ? (done > 0 ? `${done} / ${total} 件` : `${total} 件`) : "";
 }
 
 // --- Format toggle ---
@@ -261,7 +281,7 @@ async function fetchFoldersRecursive(baseUrl, headers, folderPath = "", depth = 
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type !== "EXPORT_ALL_PROGRESS") return;
-  updateProgress(msg);
+  updateJobProgress(msg.jobId, msg);
 });
 
 // Find an open tab matching one of the given hosts.
@@ -275,24 +295,25 @@ async function findServiceTab(hosts) {
   });
 }
 
-async function runBulkExport({ btn, label, hosts, openHint, func }) {
+async function runBulkExport({ btn, hosts, openHint, func, service }) {
   if (btn.disabled) return;
 
   btn.disabled = true;
   btn.textContent = "実行中…";
-  showProgress();
   hideMessage();
-  resetChatList();
-  updateProgress({ phase: "listing", done: 0, total: 0 });
 
+  let jobId = null;
   try {
     const tab = await findServiceTab(hosts);
     if (!tab) throw new Error(`${openHint} のタブを開いてから実行してください`);
 
+    jobId = `${service}-${Date.now()}`;
+    createJobCard(jobId, service);
+
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func,
-      args: [selectedFormat, selectedDest],
+      args: [selectedFormat, selectedDest, jobId],
     });
 
     const result = results?.[0]?.result;
@@ -303,7 +324,10 @@ async function runBulkExport({ btn, label, hosts, openHint, func }) {
     showMessage(`${result?.done} 件エクスポート完了！${errNote} → ${destNote}`, "success");
   } catch (err) {
     showMessage(err.message, "error");
-    hideProgress();
+    if (jobId) {
+      const lbl = document.getElementById(`jlbl-${jobId}`);
+      if (lbl) lbl.textContent = `エラー: ${err.message}`;
+    }
   } finally {
     btn.disabled = false;
     btn.textContent = "実行";
@@ -316,6 +340,7 @@ document.getElementById("btn-chatgpt-all").addEventListener("click", (e) => {
     hosts: ["chatgpt.com", "chat.openai.com"],
     openHint: "ChatGPT",
     func: doExportAll,
+    service: "chatgpt",
   });
 });
 
@@ -325,6 +350,7 @@ document.getElementById("btn-claude-all").addEventListener("click", (e) => {
     hosts: ["claude.ai"],
     openHint: "Claude",
     func: doExportAllClaude,
+    service: "claude",
   });
 });
 
@@ -334,6 +360,7 @@ document.getElementById("btn-perplexity-all").addEventListener("click", (e) => {
     hosts: ["www.perplexity.ai", "perplexity.ai"],
     openHint: "Perplexity",
     func: doExportAllPerplexity,
+    service: "perplexity",
   });
 });
 
@@ -343,6 +370,7 @@ document.getElementById("btn-gemini-all").addEventListener("click", (e) => {
     hosts: ["gemini.google.com"],
     openHint: "Gemini",
     func: doExportAllGemini,
+    service: "gemini",
   });
 });
 
@@ -351,11 +379,11 @@ document.getElementById("btn-gemini-all").addEventListener("click", (e) => {
 // (No closure access — all external values must come via args)
 // =============================================================
 
-async function doExportAll(format, dest) {
+async function doExportAll(format, dest, jobId) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const sendProgress = (data) => {
-    try { chrome.runtime.sendMessage({ type: "EXPORT_ALL_PROGRESS", ...data }); } catch (_) {}
+    try { chrome.runtime.sendMessage({ type: "EXPORT_ALL_PROGRESS", jobId, ...data }); } catch (_) {}
   };
 
   // Auth token
@@ -676,11 +704,11 @@ async function doExportAll(format, dest) {
   return { done, errors, total };
 }
 
-async function doExportAllClaude(format, dest) {
+async function doExportAllClaude(format, dest, jobId) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const sendProgress = (data) => {
-    try { chrome.runtime.sendMessage({ type: "EXPORT_ALL_PROGRESS", ...data }); } catch (_) {}
+    try { chrome.runtime.sendMessage({ type: "EXPORT_ALL_PROGRESS", jobId, ...data }); } catch (_) {}
   };
 
   const orgMatch = document.cookie.match(/lastActiveOrg=([0-9a-f-]+)/i);
@@ -774,11 +802,11 @@ async function doExportAllClaude(format, dest) {
 }
 
 // Injected into a Perplexity tab. No closure — all logic is self-contained.
-async function doExportAllPerplexity(format, dest) {
+async function doExportAllPerplexity(format, dest, jobId) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const sendProgress = (data) => {
-    try { chrome.runtime.sendMessage({ type: "EXPORT_ALL_PROGRESS", ...data }); } catch (_) {}
+    try { chrome.runtime.sendMessage({ type: "EXPORT_ALL_PROGRESS", jobId, ...data }); } catch (_) {}
   };
 
   const BLOCK_TYPES = [
@@ -976,11 +1004,11 @@ async function doExportAllPerplexity(format, dest) {
   return { done, errors, total };
 }
 
-async function doExportAllGemini(format, dest) {
+async function doExportAllGemini(format, dest, jobId) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const sendProgress = (data) => {
-    try { chrome.runtime.sendMessage({ type: "EXPORT_ALL_PROGRESS", ...data }); } catch (_) {}
+    try { chrome.runtime.sendMessage({ type: "EXPORT_ALL_PROGRESS", jobId, ...data }); } catch (_) {}
   };
 
   const wiz = readWizData();
