@@ -8,7 +8,7 @@ const SERVICES = {
   gemini:         { name: "Gemini",         icon: `<img src="../images/Google_Gemini_icon_2025.svg" alt="Gemini">`,         hosts: ["gemini.google.com"] },
   claude:         { name: "Claude",         icon: `<img src="../images/Claude_AI_symbol.svg" alt="Claude">`,               hosts: ["claude.ai"] },
   google_ai_mode: { name: "Google AI Mode", icon: `<img src="../images/Google_Gemini_icon_2025.svg" alt="Google AI Mode">`, hosts: ["www.google.com"], pathPrefix: "/search" },
-  perplexity:     { name: "Perplexity",     icon: `<img src="../images/perplexity-color.svg" alt="Perplexity">`,           hosts: ["perplexity.ai", "www.perplexity.ai"] },
+  perplexity:     { name: "Perplexity",     icon: `<img src="../images/perplexity.svg" alt="Perplexity">`,           hosts: ["perplexity.ai", "www.perplexity.ai"] },
 };
 
 const FORMAT_LABELS = { markdown: "Markdown", json: "JSON" };

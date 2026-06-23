@@ -49,7 +49,7 @@ function hideMessage() {
 const JOB_META = {
   chatgpt:    { name: "ChatGPT",    icon: `<img src="../images/OpenAI-black-monoblossom.svg" alt="ChatGPT">` },
   claude:     { name: "Claude",     icon: `<img src="../images/Claude_AI_symbol.svg" alt="Claude">` },
-  perplexity: { name: "Perplexity", icon: `<img src="../images/perplexity-color.svg" alt="Perplexity">` },
+  perplexity: { name: "Perplexity", icon: `<img src="../images/perplexity.svg" alt="Perplexity">` },
   gemini:     { name: "Gemini",     icon: `<img src="../images/Google_Gemini_icon_2025.svg" alt="Gemini">` },
 };
 
