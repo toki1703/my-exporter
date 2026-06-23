@@ -37,6 +37,15 @@ body {
   font-size: 26px;
   width: 32px;
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.service-card__icon img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
 }
 
 .service-card__text {

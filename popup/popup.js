@@ -4,11 +4,11 @@
 // =============================================================
 
 const SERVICES = {
-  chatgpt:        { name: "ChatGPT",        icon: "💬", hosts: ["chatgpt.com", "chat.openai.com"] },
-  gemini:         { name: "Gemini",         icon: "✨", hosts: ["gemini.google.com"] },
-  claude:         { name: "Claude",         icon: "🤖", hosts: ["claude.ai"] },
-  google_ai_mode: { name: "Google AI Mode", icon: "🔍", hosts: ["www.google.com"], pathPrefix: "/search" },
-  perplexity:     { name: "Perplexity",     icon: "🔮", hosts: ["perplexity.ai", "www.perplexity.ai"] },
+  chatgpt:        { name: "ChatGPT",        icon: `<img src="../images/OpenAI-black-monoblossom.svg" alt="ChatGPT">`,       hosts: ["chatgpt.com", "chat.openai.com"] },
+  gemini:         { name: "Gemini",         icon: `<img src="../images/Google_Gemini_icon_2025.svg" alt="Gemini">`,         hosts: ["gemini.google.com"] },
+  claude:         { name: "Claude",         icon: `<img src="../images/Claude_AI_symbol.svg" alt="Claude">`,               hosts: ["claude.ai"] },
+  google_ai_mode: { name: "Google AI Mode", icon: `<img src="../images/Google_Gemini_icon_2025.svg" alt="Google AI Mode">`, hosts: ["www.google.com"], pathPrefix: "/search" },
+  perplexity:     { name: "Perplexity",     icon: `<img src="../images/perplexity-color.svg" alt="Perplexity">`,           hosts: ["perplexity.ai", "www.perplexity.ai"] },
 };
 
 const FORMAT_LABELS = { markdown: "Markdown", json: "JSON" };
@@ -63,7 +63,7 @@ function renderServiceCard() {
 
   if (detectedService) {
     const meta = SERVICES[detectedService];
-    icon.textContent = meta.icon;
+    icon.innerHTML = meta.icon;
     name.textContent = meta.name;
     sub.textContent = "現在の会話をエクスポートできます";
     card.classList.remove("service-card--unsupported");

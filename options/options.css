@@ -80,6 +80,15 @@ body {
   font-size: 22px;
   width: 28px;
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bulk-row__icon img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
 }
 
 .bulk-row__text {
@@ -141,6 +150,15 @@ body {
   width: 24px;
   text-align: center;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.job-card__icon img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
 }
 
 .job-card__text {
