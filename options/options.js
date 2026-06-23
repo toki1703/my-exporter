@@ -52,7 +52,58 @@ function hideProgress() {
   document.getElementById("progress-section").classList.add("hidden");
 }
 
-function updateProgress({ phase, done = 0, total = 0, currentTitle = "" }) {
+// --- Chat list ---
+
+const _cl = { items: [] };
+
+function _clEscHtml(s) {
+  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function resetChatList() {
+  _cl.items = [];
+  document.getElementById("chat-list").innerHTML = "";
+  document.getElementById("chat-list-details").classList.add("hidden");
+  document.getElementById("chat-list-count").textContent = "";
+}
+
+function _clAddItems(titles) {
+  const ul = document.getElementById("chat-list");
+  for (const title of titles) {
+    const li = document.createElement("li");
+    li.className = "chat-list__item";
+    li.innerHTML =
+      `<span class="chat-item-status chat-item-status--pending">–</span>` +
+      `<span class="chat-item-title" title="${_clEscHtml(title)}">${_clEscHtml(title)}</span>`;
+    ul.appendChild(li);
+    _cl.items.push({ title, el: li });
+  }
+  if (_cl.items.length > 0) {
+    document.getElementById("chat-list-details").classList.remove("hidden");
+    _clUpdateCount();
+  }
+}
+
+function _clSetStatus(idx, status) {
+  const item = _cl.items[idx];
+  if (!item) return;
+  const statusEl = item.el.querySelector(".chat-item-status");
+  statusEl.className = `chat-item-status chat-item-status--${status}`;
+  statusEl.textContent = { pending: "–", active: "⟳", ok: "✓", error: "✗" }[status] ?? "–";
+  item.el.classList.toggle("chat-list__item--active", status === "active");
+  if (status === "active" && document.getElementById("chat-list-details")?.open) {
+    item.el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+}
+
+function _clUpdateCount() {
+  const total = _cl.items.length;
+  const done  = _cl.items.filter((i) => i.el.querySelector(".chat-item-status--ok, .chat-item-status--error")).length;
+  document.getElementById("chat-list-count").textContent =
+    total > 0 ? (done > 0 ? `${done} / ${total} 件` : `${total} 件`) : "";
+}
+
+function updateProgress({ phase, done = 0, total = 0, currentTitle = "", newTitles, currentIndex, prevIndex, prevOk }) {
   const label = document.getElementById("progress-label");
   const count = document.getElementById("progress-count");
   const fill  = document.getElementById("progress-fill");
@@ -62,13 +113,25 @@ function updateProgress({ phase, done = 0, total = 0, currentTitle = "" }) {
   if (phase === "listing") {
     label.textContent = "会話リストを取得中...";
     fill.style.width = total > 0 ? `${(done / total) * 20}%` : "5%";
+    if (newTitles?.length) _clAddItems(newTitles);
   } else if (phase === "exporting") {
     const short = currentTitle ? `「${currentTitle.slice(0, 24)}」` : "";
     label.textContent = short ? `${short} をエクスポート中` : "エクスポート中...";
     fill.style.width = total > 0 ? `${20 + (done / total) * 80}%` : "20%";
+    if (typeof prevIndex === "number" && prevIndex >= 0) {
+      _clSetStatus(prevIndex, prevOk === false ? "error" : "ok");
+    }
+    if (typeof currentIndex === "number" && currentIndex >= 0) {
+      _clSetStatus(currentIndex, "active");
+    }
+    _clUpdateCount();
   } else if (phase === "done") {
     label.textContent = "完了";
     fill.style.width = "100%";
+    if (typeof prevIndex === "number" && prevIndex >= 0) {
+      _clSetStatus(prevIndex, prevOk === false ? "error" : "ok");
+    }
+    _clUpdateCount();
   }
 }
 
@@ -219,6 +282,7 @@ async function runBulkExport({ btn, label, hosts, openHint, func }) {
   btn.textContent = "実行中…";
   showProgress();
   hideMessage();
+  resetChatList();
   updateProgress({ phase: "listing", done: 0, total: 0 });
 
   try {
@@ -527,7 +591,7 @@ async function doExportAll(format, dest) {
     items.push(...page.items);
     // page.total is unreliable (can under-report), so rely on the page size:
     // a short page means we've reached the end.
-    sendProgress({ phase: "listing", done: items.length, total: page.total });
+    sendProgress({ phase: "listing", done: items.length, total: page.total, newTitles: page.items.map((i) => i.title || "Untitled") });
     if (page.items.length < 100) break;
     offset += 100;
     await sleep(300);
@@ -539,8 +603,11 @@ async function doExportAll(format, dest) {
   let done = 0;
   let errors = 0;
 
-  for (const item of items) {
-    sendProgress({ phase: "exporting", done, total, currentTitle: item.title });
+  let prevIdx = -1;
+  let prevOk = null;
+  for (const [i, item] of items.entries()) {
+    sendProgress({ phase: "exporting", done, total, currentTitle: item.title, currentIndex: i, prevIndex: prevIdx, prevOk });
+    prevIdx = i;
 
     try {
       const r = await fetch(`/backend-api/conversation/${item.id}`, {
@@ -595,16 +662,17 @@ async function doExportAll(format, dest) {
         },
       });
 
-      if (result?.ok) done++;
-      else errors++;
+      if (result?.ok) { done++; prevOk = true; }
+      else { errors++; prevOk = false; }
     } catch (_) {
       errors++;
+      prevOk = false;
     }
 
     await sleep(300);
   }
 
-  sendProgress({ phase: "done", done, errors, total });
+  sendProgress({ phase: "done", done, errors, total, prevIndex: prevIdx, prevOk });
   return { done, errors, total };
 }
 
@@ -632,7 +700,7 @@ async function doExportAllClaude(format, dest) {
     const data = await r.json();
     const page = data.data ?? [];
     conversations.push(...page);
-    sendProgress({ phase: "listing", done: conversations.length, total: conversations.length });
+    sendProgress({ phase: "listing", done: conversations.length, total: conversations.length, newTitles: page.map((c) => c.name || "Claude Export") });
     if (!data.has_more) break;
     offset += limit;
     await sleep(300);
@@ -652,10 +720,13 @@ async function doExportAllClaude(format, dest) {
       .trim();
   }
 
-  for (const conv of conversations) {
+  let prevIdx = -1;
+  let prevOk = null;
+  for (const [i, conv] of conversations.entries()) {
     const convId = conv.uuid;
     const convTitle = conv.name || "Claude Export";
-    sendProgress({ phase: "exporting", done, total, currentTitle: convTitle });
+    sendProgress({ phase: "exporting", done, total, currentTitle: convTitle, currentIndex: i, prevIndex: prevIdx, prevOk });
+    prevIdx = i;
 
     try {
       const r = await fetch(
@@ -688,16 +759,17 @@ async function doExportAllClaude(format, dest) {
         },
       });
 
-      if (result?.ok) done++;
-      else errors++;
+      if (result?.ok) { done++; prevOk = true; }
+      else { errors++; prevOk = false; }
     } catch (_) {
       errors++;
+      prevOk = false;
     }
 
     await sleep(300);
   }
 
-  sendProgress({ phase: "done", done, errors, total });
+  sendProgress({ phase: "done", done, errors, total, prevIndex: prevIdx, prevOk });
   return { done, errors, total };
 }
 
@@ -758,7 +830,7 @@ async function doExportAllPerplexity(format, dest) {
     if (totalThreads === 0 && page[0]?.total_threads) {
       totalThreads = page[0].total_threads;
     }
-    sendProgress({ phase: "listing", done: threads.length, total: totalThreads || threads.length });
+    sendProgress({ phase: "listing", done: threads.length, total: totalThreads, newTitles: page.map((t) => t.title || t.query_str || "Perplexity Export") });
 
     if (threads.length >= (totalThreads || Infinity) || page.length < limit) break;
     offset += limit;
@@ -814,13 +886,16 @@ async function doExportAllPerplexity(format, dest) {
   let done = 0;
   let errors = 0;
 
-  for (const thread of threads) {
+  let prevIdx = -1;
+  let prevOk = null;
+  for (const [i, thread] of threads.entries()) {
     // uuid == slug in the list response
     const threadId = thread.uuid || thread.slug;
     const threadTitle = thread.title || thread.query_str || "Perplexity Export";
     const threadTs = thread.last_query_datetime || undefined;
 
-    sendProgress({ phase: "exporting", done, total, currentTitle: threadTitle });
+    sendProgress({ phase: "exporting", done, total, currentTitle: threadTitle, currentIndex: i, prevIndex: prevIdx, prevOk });
+    prevIdx = i;
 
     try {
       if (!threadId) throw new Error("thread ID なし");
@@ -887,16 +962,17 @@ async function doExportAllPerplexity(format, dest) {
         },
       });
 
-      if (result?.ok) done++;
-      else errors++;
+      if (result?.ok) { done++; prevOk = true; }
+      else { errors++; prevOk = false; }
     } catch (_) {
       errors++;
+      prevOk = false;
     }
 
     await sleep(400);
   }
 
-  sendProgress({ phase: "done", done, errors, total });
+  sendProgress({ phase: "done", done, errors, total, prevIndex: prevIdx, prevOk });
   return { done, errors, total };
 }
 
@@ -949,7 +1025,7 @@ async function doExportAllGemini(format, dest) {
   }
   const items = Array.from(chatsMap.values());
 
-  sendProgress({ phase: "listing", done: items.length, total: items.length });
+  sendProgress({ phase: "listing", done: items.length, total: items.length, newTitles: items.map((i) => i.title) });
   if (items.length === 0) {
     return { error: "会話が見つかりませんでした。" };
   }
@@ -958,10 +1034,13 @@ async function doExportAllGemini(format, dest) {
   const folder = `gemini_${new Date().toISOString().slice(0, 10)}`;
   let done = 0;
   let errors = 0;
+  let prevIdx = -1;
+  let prevOk = null;
 
-  for (const item of items) {
+  for (const [i, item] of items.entries()) {
     const convId = item.id.replace(/^c_/, "");
-    sendProgress({ phase: "exporting", done, total, currentTitle: item.title });
+    sendProgress({ phase: "exporting", done, total, currentTitle: item.title, currentIndex: i, prevIndex: prevIdx, prevOk });
+    prevIdx = i;
 
     try {
       const resp = await new Promise((resolve) => {
@@ -995,16 +1074,17 @@ async function doExportAllGemini(format, dest) {
         }, resolve);
       });
 
-      if (result?.ok) done++;
-      else errors++;
+      if (result?.ok) { done++; prevOk = true; }
+      else { errors++; prevOk = false; }
     } catch (_) {
       errors++;
+      prevOk = false;
     }
 
     await sleep(300);
   }
 
-  sendProgress({ phase: "done", done, errors, total });
+  sendProgress({ phase: "done", done, errors, total, prevIndex: prevIdx, prevOk });
   return { done, errors, total };
 
   // ── Helpers ────────────────────────────────────────────────────────────────

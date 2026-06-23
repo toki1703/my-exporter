@@ -109,3 +109,105 @@ body {
   padding-top: 16px;
   border-top: 1px solid var(--outline-variant);
 }
+
+/* ---------- Chat list (collapsible) ---------- */
+
+.chat-list-details {
+  margin-top: 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.chat-list-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  background: var(--surface-2);
+  list-style: none;
+}
+
+.chat-list-summary::-webkit-details-marker { display: none; }
+
+.chat-list-summary__arrow {
+  font-size: 10px;
+  flex-shrink: 0;
+  color: var(--on-surface-variant);
+  transition: transform 0.2s;
+}
+
+details[open] .chat-list-summary__arrow {
+  transform: rotate(90deg);
+}
+
+.chat-list-summary__label {
+  flex: 1;
+  font-weight: 500;
+  color: var(--on-surface-variant);
+}
+
+.chat-list-summary__count {
+  font-size: 12px;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.chat-list {
+  list-style: none;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.chat-list__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--outline-variant);
+  transition: background-color 0.15s;
+}
+
+.chat-list__item:last-child {
+  border-bottom: none;
+}
+
+.chat-list__item--active {
+  background: var(--primary-container);
+}
+
+.chat-item-status {
+  flex-shrink: 0;
+  width: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.chat-item-status--pending { color: var(--outline); }
+
+.chat-item-status--active {
+  color: var(--primary);
+  display: inline-block;
+  animation: chat-spin 0.9s linear infinite;
+}
+
+.chat-item-status--ok { color: var(--success); }
+
+.chat-item-status--error { color: var(--error); }
+
+@keyframes chat-spin {
+  to { transform: rotate(360deg); }
+}
+
+.chat-item-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--on-surface);
+}
