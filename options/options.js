@@ -319,10 +319,13 @@ async function _runExport({ hosts, openHint, func, service }) {
   }
 }
 
+const INDIVIDUAL_BTN_IDS = ["btn-chatgpt-all", "btn-claude-all", "btn-perplexity-all", "btn-gemini-all"];
+
 async function runBulkExport({ btn, hosts, openHint, func, service }) {
   if (btn.disabled) return;
   btn.disabled = true;
   btn.textContent = "実行中…";
+  document.getElementById("btn-all").disabled = true;
   hideMessage();
 
   const result = await _runExport({ hosts, openHint, func, service });
@@ -337,6 +340,11 @@ async function runBulkExport({ btn, hosts, openHint, func, service }) {
 
   btn.disabled = false;
   btn.textContent = "実行";
+
+  // 他の個別エクスポートが全て終わっていれば btn-all を再有効化
+  if (!INDIVIDUAL_BTN_IDS.some((id) => document.getElementById(id)?.disabled)) {
+    document.getElementById("btn-all").disabled = false;
+  }
 }
 
 document.getElementById("btn-chatgpt-all").addEventListener("click", (e) => {
@@ -379,26 +387,37 @@ document.getElementById("btn-gemini-all").addEventListener("click", (e) => {
   });
 });
 
+const ALL_EXPORT_SERVICES = [
+  { btnId: "btn-chatgpt-all",    hosts: ["chatgpt.com", "chat.openai.com"],          openHint: "ChatGPT",    func: doExportAll,           service: "chatgpt" },
+  { btnId: "btn-claude-all",     hosts: ["claude.ai"],                               openHint: "Claude",     func: doExportAllClaude,     service: "claude" },
+  { btnId: "btn-perplexity-all", hosts: ["www.perplexity.ai", "perplexity.ai"],      openHint: "Perplexity", func: doExportAllPerplexity, service: "perplexity" },
+  { btnId: "btn-gemini-all",     hosts: ["gemini.google.com"],                       openHint: "Gemini",     func: doExportAllGemini,     service: "gemini" },
+];
+
 document.getElementById("btn-all").addEventListener("click", async (e) => {
   const btn = e.currentTarget;
   if (btn.disabled) return;
 
-  const individualIds = ["btn-chatgpt-all", "btn-claude-all", "btn-perplexity-all", "btn-gemini-all"];
+  // 既に個別で実行中のサービスを記録してからボタンを無効化
+  const alreadyRunning = new Set(
+    INDIVIDUAL_BTN_IDS.filter((id) => document.getElementById(id).disabled)
+  );
+
   btn.disabled = true;
   btn.textContent = "実行中…";
-  individualIds.forEach((id) => { document.getElementById(id).disabled = true; });
+  INDIVIDUAL_BTN_IDS.forEach((id) => { document.getElementById(id).disabled = true; });
   hideMessage();
 
-  await Promise.all([
-    _runExport({ hosts: ["chatgpt.com", "chat.openai.com"],          openHint: "ChatGPT",    func: doExportAll,            service: "chatgpt" }),
-    _runExport({ hosts: ["claude.ai"],                               openHint: "Claude",      func: doExportAllClaude,      service: "claude" }),
-    _runExport({ hosts: ["www.perplexity.ai", "perplexity.ai"],      openHint: "Perplexity", func: doExportAllPerplexity,  service: "perplexity" }),
-    _runExport({ hosts: ["gemini.google.com"],                       openHint: "Gemini",      func: doExportAllGemini,      service: "gemini" }),
-  ]);
+  // 既に実行中のサービスはスキップ
+  await Promise.all(
+    ALL_EXPORT_SERVICES
+      .filter((s) => !alreadyRunning.has(s.btnId))
+      .map((s) => _runExport(s))
+  );
 
   btn.disabled = false;
   btn.textContent = "全プロバイダーを一括エクスポート";
-  individualIds.forEach((id) => { document.getElementById(id).disabled = false; });
+  INDIVIDUAL_BTN_IDS.forEach((id) => { document.getElementById(id).disabled = false; });
 });
 
 // =============================================================
