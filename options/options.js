@@ -924,7 +924,8 @@ async function doExportAllPerplexity(format, dest, jobId) {
   }
 
   if (threads.length === 0) {
-    return { error: "スレッドが見つかりませんでした。Perplexity にログインしていることを確認してください。" };
+    sendProgress({ phase: "done", done: 0, errors: 0, total: 0 });
+    return { done: 0, errors: 0, total: 0 };
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1113,7 +1114,8 @@ async function doExportAllGemini(format, dest, jobId) {
 
   sendProgress({ phase: "listing", done: items.length, total: items.length, newTitles: items.map((i) => i.title) });
   if (items.length === 0) {
-    return { error: "会話が見つかりませんでした。" };
+    sendProgress({ phase: "done", done: 0, errors: 0, total: 0 });
+    return { done: 0, errors: 0, total: 0 };
   }
 
   const total = items.length;
@@ -1347,7 +1349,8 @@ async function doExportAllGoogleAiMode(format, dest, jobId) {
   sendProgress({ phase: "listing", done: items.length, total: items.length, newTitles: items.map((i) => i.title) });
 
   if (items.length === 0) {
-    return { error: "会話が見つかりませんでした。" };
+    sendProgress({ phase: "done", done: 0, errors: 0, total: 0 });
+    return { done: 0, errors: 0, total: 0 };
   }
 
   const total = items.length;
