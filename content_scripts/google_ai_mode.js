@@ -1,20 +1,24 @@
 // Google Search — AI Mode collector
-// Targets the dedicated AI Mode chat interface (?udm=50), NOT the AI Overview
-// block that can appear in regular search results.
+// Targets the dedicated AI Mode chat interface (?udm=50 or ?mtid=...).
 //
-// Key selectors discovered from HAR analysis (2026-06):
-//   [data-xid="aim-zsv2-turns-container"]  — completed conversation turns (ul > li)
-//   [data-xid="aim-mars-turn-root"]        — active/streaming turn root
+// Key selectors aligned with reference extension (SaveAI 4.3.0):
+//   [data-subtree="aimc"]          — assistant turn container (walk up to find turn root)
+//   .iMqumd                        — user query element within a turn root
+//   .CKgc1d                        — fallback turn root selector
+//   [data-container-id="main-col"] — assistant response columns
+//   ul.bTFeG li a[href]            — source links
 
 (function () {
   const { register, cleanText } = window.__myExporter;
 
   register("google_ai_mode", async () => {
     const params = new URLSearchParams(location.search);
+    const hasMtid = params.has("mtid");
+    const hasUdm50 = params.get("udm") === "50";
 
-    if (params.get("udm") !== "50") {
+    if (!hasMtid && !hasUdm50) {
       throw new Error(
-        "Google AI Mode のページで使用してください（URL に udm=50 が含まれている必要があります）"
+        "Google AI Mode のページで使用してください（URL に udm=50 または mtid が含まれている必要があります）"
       );
     }
 
@@ -24,20 +28,27 @@
       throw new Error("検索を実行してからエクスポートしてください");
     }
 
-    const turnsContainer = document.querySelector('[data-xid="aim-zsv2-turns-container"]');
-    const messages = extractMessages(turnsContainer, query);
+    const turnRoots = getTurnRoots();
+    const turns = turnRoots.map((root) => ({
+      userText: extractUserText(root),
+      assistantText: extractAssistantText(root),
+      sources: extractSources(root),
+    })).filter((t) => t.userText || t.assistantText || t.sources.length);
+
+    const messages = [];
+    for (const turn of turns) {
+      if (turn.userText) {
+        messages.push({ role: "user", content: turn.userText });
+      }
+      if (turn.assistantText) {
+        messages.push({ role: "assistant", content: turn.assistantText });
+      }
+    }
 
     if (messages.length === 0) {
-      // Fall back to the active/streaming turn root.
-      const activeTurn = document.querySelector('[data-xid="aim-mars-turn-root"]');
-      const text = activeTurn ? cleanText(activeTurn) : "";
-      if (!text) {
-        throw new Error(
-          "回答が見つかりません。回答が完了してからエクスポートしてください。"
-        );
-      }
-      messages.push({ role: "user", content: query });
-      messages.push({ role: "assistant", content: text });
+      throw new Error(
+        "回答が見つかりません。回答が完了してからエクスポートしてください。"
+      );
     }
 
     if (messages[0]?.role !== "user") {
@@ -45,28 +56,21 @@
     }
 
     // Fetch the thread's creation time from AimThreadsService/ListThreads.
-    // Failures are silently ignored — chatTime stays undefined and the markdown
-    // exporter falls back to exportedAt.
     const chatTime = await fetchChatTime(query, params);
 
+    // Collect sources across all turns, deduplicated.
     const seenUrls = new Set();
-    const sources = Array.from(
-      (turnsContainer ?? document).querySelectorAll('a[href^="http"]')
-    )
-      .filter((a) => {
-        const url = a.href;
-        if (!url || seenUrls.has(url)) return false;
-        if (/google\.com\/(search|url|imgres)/.test(url)) return false;
-        const title = a.textContent.trim();
-        if (!title) return false;
-        seenUrls.add(url);
-        return true;
-      })
-      .map((a) => ({ title: a.textContent.trim(), url: a.href }));
+    const sources = turns.flatMap((t) => t.sources).filter((s) => {
+      if (!s.url || seenUrls.has(s.url)) return false;
+      seenUrls.add(s.url);
+      return true;
+    });
+
+    const title = extractTitle() || `Google AI: ${query}`;
 
     return {
       service: "google_ai_mode",
-      title: `Google AI: ${query}`,
+      title,
       exportedAt: new Date().toISOString(),
       chatTime,
       url: location.href,
@@ -75,10 +79,123 @@
     };
   });
 
+  function getTurnRoots() {
+    // Primary: find [data-subtree="aimc"] containers, then walk up to the turn root
+    // that contains a .iMqumd user query element.
+    const assistantContainers = Array.from(
+      document.querySelectorAll('[data-subtree="aimc"]')
+    );
+    if (assistantContainers.length > 0) {
+      const roots = assistantContainers
+        .map(findTurnRootFromAssistantContainer)
+        .filter(Boolean);
+      const unique = Array.from(new Set(roots));
+      if (unique.length > 0) return unique;
+    }
+    // Fallback: direct turn root class
+    return Array.from(document.querySelectorAll(".CKgc1d"));
+  }
+
+  function findTurnRootFromAssistantContainer(el) {
+    let node = el;
+    for (let i = 0; i < 10 && node; i++) {
+      if (node.querySelector(".iMqumd")) return node;
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  function extractUserText(root) {
+    const queryEl = root.querySelector(".iMqumd");
+    if (!queryEl) return "";
+    const parent = queryEl.parentElement;
+    if (!parent) return cleanText(queryEl);
+    const clone = parent.cloneNode(true);
+    clone.querySelector(".iMqumd")?.remove();
+    removeNoiseElements(clone);
+    return (clone.textContent ?? "").replace(/\s+/g, " ").trim();
+  }
+
+  function extractAssistantText(root) {
+    const mainCols = Array.from(
+      root.querySelectorAll('[data-container-id="main-col"]')
+    );
+    if (mainCols.length > 0) {
+      return mainCols
+        .map((col) => {
+          const clone = col.cloneNode(true);
+          removeNoiseElements(clone);
+          return cleanText(clone);
+        })
+        .filter(Boolean)
+        .join("\n\n");
+    }
+    // Fallback: get all text from the root minus the user query
+    const userText = extractUserText(root);
+    const fullText = cleanText(root);
+    if (!userText) return fullText;
+    return fullText.replace(userText, "").replace(/^\s+/, "");
+  }
+
+  function extractSources(root) {
+    const links = Array.from(root.querySelectorAll("ul.bTFeG li a[href]"));
+    const seen = new Map();
+    links.forEach((a) => {
+      const url = normalizeSourceUrl(a.getAttribute("href") || "");
+      if (!url || seen.has(url)) return;
+      seen.set(url, {
+        title: extractSourceTitle(a),
+        url,
+        domain: extractSourceDomain(url),
+      });
+    });
+    return Array.from(seen.values());
+  }
+
+  function removeNoiseElements(el) {
+    const buttonParents = Array.from(el.querySelectorAll("button[aria-label]"))
+      .map((b) => b.parentElement)
+      .filter((p) => p && p !== el);
+    Array.from(new Set(buttonParents)).forEach((p) => p.remove());
+    el.querySelectorAll(
+      "button, style, script, noscript, svg, [hidden], [style*='display:none'], [style*='display: none']"
+    ).forEach((n) => n.remove());
+  }
+
+  function extractTitle() {
+    const t = document.title.trim();
+    if (!t) return "";
+    const parts = t.split(" - ").map((p) => p.trim()).filter(Boolean);
+    return parts.length <= 1 ? t : parts.slice(0, -1).join(" - ") || t;
+  }
+
+  function normalizeSourceUrl(href) {
+    try {
+      const u = new URL(href, window.location.origin);
+      return (u.pathname === "/url" && u.searchParams.get("url")) || u.href;
+    } catch {
+      return "";
+    }
+  }
+
+  function extractSourceTitle(a) {
+    const label = (a.getAttribute("aria-label") || "")
+      .replace(/\.?\s*Opens in a new tab\.?\s*$/i, "")
+      .trim();
+    return (label || a.textContent || a.href).replace(/\s+/g, " ").trim();
+  }
+
+  function extractSourceDomain(url) {
+    try {
+      return new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+      return url;
+    }
+  }
+
   /**
    * Ask the service worker to call AimThreadsService/ListThreads and return
    * the ISO creation timestamp of the thread whose title matches `query`.
-   * Returns undefined on any failure so the caller can fall back gracefully.
    */
   function fetchChatTime(query, urlParams) {
     return new Promise((resolve) => {
@@ -114,10 +231,8 @@
    *   [0]  ["thread_id", "session_id"]
    *   [1]  "title"  (the user's original query)
    *   [5]  [seconds, nanos]  — creation timestamp
-   *   [6]  [seconds, nanos]  — last-modified timestamp
    */
   function parseListThreads(text) {
-    // Strip XSSI prefix: )]}'<newline>
     const jsonStart = text.indexOf("[");
     if (jsonStart === -1) return [];
     let data;
@@ -134,39 +249,5 @@
         createdAt: tsSec ? new Date(tsSec * 1000).toISOString() : undefined,
       };
     });
-  }
-
-  function extractMessages(container, latestQuery) {
-    const messages = [];
-    if (!container) return messages;
-
-    const items = container.querySelectorAll("ul > li");
-    if (items.length === 0) return messages;
-
-    for (const item of items) {
-      const fullText = cleanText(item);
-      if (!fullText) continue;
-
-      const queryEl =
-        item.querySelector("h1, h2, h3") ??
-        item.querySelector('[role="heading"]') ??
-        item.querySelector('[data-xid*="query"], [data-xid*="user-query"]');
-
-      if (queryEl) {
-        const userText = cleanText(queryEl);
-        const responseText = fullText.replace(userText, "").replace(/^\s+/, "");
-        messages.push({ role: "user", content: userText });
-        if (responseText) {
-          messages.push({ role: "assistant", content: responseText });
-        }
-      } else {
-        if (messages.length === 0) {
-          messages.push({ role: "user", content: latestQuery });
-        }
-        messages.push({ role: "assistant", content: fullText });
-      }
-    }
-
-    return messages;
   }
 })();
