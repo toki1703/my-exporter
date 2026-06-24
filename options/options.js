@@ -51,6 +51,7 @@ const JOB_META = {
   claude:     { name: "Claude",     icon: `<img src="../images/Claude_AI_symbol.svg" alt="Claude">` },
   perplexity: { name: "Perplexity", icon: `<img src="../images/perplexity.svg" alt="Perplexity">` },
   gemini:     { name: "Gemini",     icon: `<img src="../images/Google_Gemini_icon_2025.svg" alt="Gemini">` },
+  google_ai_mode: { name: "Google AI Mode", icon: `<img src="../images/Google_Gemini_icon_2025.svg" alt="Google AI Mode">` },
 };
 
 const _jobs = new Map();
@@ -319,7 +320,7 @@ async function _runExport({ hosts, openHint, func, service }) {
   }
 }
 
-const INDIVIDUAL_BTN_IDS = ["btn-chatgpt-all", "btn-claude-all", "btn-perplexity-all", "btn-gemini-all"];
+const INDIVIDUAL_BTN_IDS = ["btn-chatgpt-all", "btn-claude-all", "btn-perplexity-all", "btn-gemini-all", "btn-google-ai-mode-all"];
 
 async function runBulkExport({ btn, hosts, openHint, func, service }) {
   if (btn.disabled) return;
@@ -387,11 +388,22 @@ document.getElementById("btn-gemini-all").addEventListener("click", (e) => {
   });
 });
 
+document.getElementById("btn-google-ai-mode-all").addEventListener("click", (e) => {
+  runBulkExport({
+    btn: e.currentTarget,
+    hosts: ["www.google.com", "google.com"],
+    openHint: "Google AI Mode",
+    func: doExportAllGoogleAiMode,
+    service: "google_ai_mode",
+  });
+});
+
 const ALL_EXPORT_SERVICES = [
   { btnId: "btn-chatgpt-all",    hosts: ["chatgpt.com", "chat.openai.com"],          openHint: "ChatGPT",    func: doExportAll,           service: "chatgpt" },
   { btnId: "btn-claude-all",     hosts: ["claude.ai"],                               openHint: "Claude",     func: doExportAllClaude,     service: "claude" },
   { btnId: "btn-perplexity-all", hosts: ["www.perplexity.ai", "perplexity.ai"],      openHint: "Perplexity", func: doExportAllPerplexity, service: "perplexity" },
   { btnId: "btn-gemini-all",     hosts: ["gemini.google.com"],                       openHint: "Gemini",     func: doExportAllGemini,     service: "gemini" },
+  { btnId: "btn-google-ai-mode-all", hosts: ["www.google.com", "google.com"],          openHint: "Google AI Mode", func: doExportAllGoogleAiMode, service: "google_ai_mode" },
 ];
 
 document.getElementById("btn-all").addEventListener("click", async (e) => {
@@ -1302,5 +1314,237 @@ async function doExportAllGemini(format, dest, jobId) {
       }
     }
     return null;
+  }
+}
+
+async function doExportAllGoogleAiMode(format, dest, jobId) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const sendProgress = (data) => {
+    try { chrome.runtime.sendMessage({ type: "EXPORT_ALL_PROGRESS", jobId, ...data }); } catch (_) {}
+  };
+
+  const urlParams = new URLSearchParams(location.search);
+  const rlz = urlParams.get("rlz") ?? undefined;
+  const aep = urlParams.get("aep") ?? "42";
+  const amc = urlParams.get("amc") ?? "1";
+  const opi = urlParams.get("opi") ?? undefined;
+
+  sendProgress({ phase: "listing", done: 0, total: 0 });
+
+  const resp = await new Promise((resolve) => {
+    chrome.runtime.sendMessage({
+      type: "AIM_LIST_THREADS",
+      rlz, aep, amc, opi
+    }, resolve);
+  });
+
+  if (!resp?.ok || !resp.text) {
+    return { error: resp?.error || "スレッドリストの取得に失敗しました。" };
+  }
+
+  const items = parseListThreads(resp.text);
+  sendProgress({ phase: "listing", done: items.length, total: items.length, newTitles: items.map((i) => i.title) });
+
+  if (items.length === 0) {
+    return { error: "会話が見つかりませんでした。" };
+  }
+
+  const total = items.length;
+  const folder = `google_ai_mode_${new Date().toISOString().slice(0, 10)}`;
+  let done = 0;
+  let errors = 0;
+  let prevIdx = -1;
+  let prevOk = null;
+
+  for (const [i, item] of items.entries()) {
+    sendProgress({ phase: "exporting", done, total, currentTitle: item.title, currentIndex: i, prevIndex: prevIdx, prevOk });
+    prevIdx = i;
+
+    try {
+      let messages = [];
+      let sources = [];
+
+      const getResp = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: "AIM_GET_THREAD",
+          threadId: item.threadId,
+          sessionId: item.sessionId,
+          rlz, aep, amc, opi
+        }, resolve);
+      });
+
+      if (getResp?.ok && getResp.text) {
+        const parsed = parseGetThreadResponse(getResp.text, item.title);
+        messages = parsed.messages;
+        sources = parsed.sources;
+      }
+
+      if (messages.length === 0) {
+        const searchHtml = await fetchSearchPage(item.title, { rlz, aep, amc, opi });
+        if (searchHtml) {
+          const parsed = parseSearchHtml(searchHtml, item.title);
+          messages = parsed.messages;
+          sources = parsed.sources;
+        }
+      }
+
+      if (messages.length === 0) {
+        throw new Error("会話の内容を取得できませんでした。");
+      }
+
+      const result = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: "EXPORT",
+          service: "google_ai_mode",
+          format,
+          dest,
+          folder,
+          data: {
+            service: "google_ai_mode",
+            title: `Google AI: ${item.title}`,
+            exportedAt: new Date().toISOString(),
+            chatTime: item.createdAt,
+            url: `https://www.google.com/search?q=${encodeURIComponent(item.title)}&udm=50`,
+            messages,
+            sources,
+          }
+        }, resolve);
+      });
+
+      if (result?.ok) { done++; prevOk = true; }
+      else { errors++; prevOk = false; }
+    } catch (_) {
+      errors++;
+      prevOk = false;
+    }
+
+    await sleep(300);
+  }
+
+  sendProgress({ phase: "done", done, errors, total, prevIndex: prevIdx, prevOk });
+  return { done, errors, total };
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  function parseListThreads(text) {
+    const jsonStart = text.indexOf("[");
+    if (jsonStart === -1) return [];
+    let data;
+    try { data = JSON.parse(text.slice(jsonStart)); } catch (_) { return []; }
+
+    const entries = data?.[0];
+    if (!Array.isArray(entries)) return [];
+
+    return entries.map((e) => {
+      const tsArr = e?.[5];
+      const tsSec = Array.isArray(tsArr) && typeof tsArr[0] === "number" ? tsArr[0] : null;
+      return {
+        threadId: Array.isArray(e?.[0]) ? e[0][0] : undefined,
+        sessionId: Array.isArray(e?.[0]) ? e[0][1] : undefined,
+        title: typeof e?.[1] === "string" ? e[1] : "",
+        createdAt: tsSec ? new Date(tsSec * 1000).toISOString() : undefined,
+      };
+    });
+  }
+
+  function parseGetThreadResponse(text, query) {
+    const jsonStart = text.indexOf("[");
+    if (jsonStart === -1) return { messages: [], sources: [] };
+    let data;
+    try { data = JSON.parse(text.slice(jsonStart)); } catch (_) { return { messages: [], sources: [] }; }
+
+    const messages = [];
+    const sources = [];
+
+    // Custom heuristic parsing if AimThreadsService/GetThread structure is nested arrays:
+    // Try to find if there are elements matching standard formats.
+    return { messages, sources };
+  }
+
+  async function fetchSearchPage(query, params) {
+    try {
+      const url = new URL("https://www.google.com/search");
+      url.searchParams.set("q", query);
+      url.searchParams.set("udm", "50");
+      if (params.rlz) url.searchParams.set("rlz", params.rlz);
+      if (params.aep) url.searchParams.set("aep", params.aep);
+      if (params.amc) url.searchParams.set("amc", params.amc);
+      if (params.opi) url.searchParams.set("opi", params.opi);
+
+      const resp = await fetch(url.toString(), { credentials: "include" });
+      if (!resp.ok) return null;
+      return await resp.text();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function parseSearchHtml(htmlText, query) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlText, "text/html");
+    const turnsContainer = doc.querySelector('[data-xid="aim-zsv2-turns-container"]');
+    
+    const cleanText = (el) => el?.innerText?.replace(/\n{3,}/g, "\n\n").trim() ?? "";
+    const messages = [];
+
+    if (turnsContainer) {
+      const items = turnsContainer.querySelectorAll("ul > li");
+      if (items.length > 0) {
+        for (const item of items) {
+          const fullText = cleanText(item);
+          if (!fullText) continue;
+
+          const queryEl =
+            item.querySelector("h1, h2, h3") ??
+            item.querySelector('[role="heading"]') ??
+            item.querySelector('[data-xid*="query"], [data-xid*="user-query"]');
+
+          if (queryEl) {
+            const userText = cleanText(queryEl);
+            const responseText = fullText.replace(userText, "").replace(/^\s+/, "");
+            messages.push({ role: "user", content: userText });
+            if (responseText) {
+              messages.push({ role: "assistant", content: responseText });
+            }
+          } else {
+            if (messages.length === 0) {
+              messages.push({ role: "user", content: query });
+            }
+            messages.push({ role: "assistant", content: fullText });
+          }
+        }
+      }
+    }
+
+    if (messages.length === 0) {
+      const activeTurn = doc.querySelector('[data-xid="aim-mars-turn-root"]');
+      const text = activeTurn ? cleanText(activeTurn) : "";
+      if (text) {
+        messages.push({ role: "user", content: query });
+        messages.push({ role: "assistant", content: text });
+      }
+    }
+
+    if (messages.length > 0 && messages[0]?.role !== "user") {
+      messages.unshift({ role: "user", content: query });
+    }
+
+    const seenUrls = new Set();
+    const sources = Array.from(
+      (turnsContainer ?? doc).querySelectorAll('a[href^="http"]')
+    )
+      .filter((a) => {
+        const url = a.href;
+        if (!url || seenUrls.has(url)) return false;
+        if (/google\.com\/(search|url|imgres)/.test(url)) return false;
+        const title = a.textContent.trim();
+        if (!title) return false;
+        seenUrls.add(url);
+        return true;
+      })
+      .map((a) => ({ title: a.textContent.trim(), url: a.href }));
+
+    return { messages, sources };
   }
 }

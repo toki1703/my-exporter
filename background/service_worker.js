@@ -68,13 +68,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 // Called by the google_ai_mode content script to obtain the thread creation
 // timestamp for the current conversation, which is used as chatTime.
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type !== "AIM_LIST_THREADS") return false;
-
-  fetchAimThreadList(message).then(sendResponse).catch((err) => {
-    sendResponse({ ok: false, error: err.message });
-  });
-
-  return true;
+  if (message.type === "AIM_LIST_THREADS") {
+    fetchAimThreadList(message).then(sendResponse).catch((err) => {
+      sendResponse({ ok: false, error: err.message });
+    });
+    return true;
+  }
+  if (message.type === "AIM_GET_THREAD") {
+    fetchAimThread(message).then(sendResponse).catch((err) => {
+      sendResponse({ ok: false, error: err.message });
+    });
+    return true;
+  }
+  return false;
 });
 
 async function fetchGeminiTurns({ convId, at, sid, bl, uPrefix, hl }) {
@@ -174,8 +180,29 @@ async function fetchAimThreadList({ rlz, aep, amc, opi }) {
     { method: "GET", credentials: "include", headers: { Accept: "*/*" } }
   );
 
+  return { ok: true, text: await resp.text() };
+}
+
+async function fetchAimThread({ threadId, sessionId, rlz, aep, amc, opi }) {
+  const params = new URLSearchParams({
+    aep: aep || "42",
+    amc: amc || "1",
+    source: "chrome.crn.rb",
+    sourceid: "chrome",
+    udm: "50",
+    "reqpld": JSON.stringify([threadId, sessionId]),
+    msc: "gwsclient",
+  });
+  if (rlz) params.set("rlz", rlz);
+  if (opi) params.set("opi", opi);
+
+  const resp = await fetch(
+    `https://www.google.com/httpservice/web/AimThreadsService/GetThread?${params}`,
+    { method: "GET", credentials: "include", headers: { Accept: "*/*" } }
+  );
+
   if (!resp.ok) {
-    return { ok: false, error: `AimThreadsService エラー: ${resp.status}` };
+    return { ok: false, error: `AimThreadsService/GetThread エラー: ${resp.status}` };
   }
 
   return { ok: true, text: await resp.text() };
