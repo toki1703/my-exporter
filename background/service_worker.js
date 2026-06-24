@@ -64,6 +64,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
+// Google AI Mode — AimThreadsService/ListThreads fetch.
+// Called by the google_ai_mode content script to obtain the thread creation
+// timestamp for the current conversation, which is used as chatTime.
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type !== "AIM_LIST_THREADS") return false;
+
+  fetchAimThreadList(message).then(sendResponse).catch((err) => {
+    sendResponse({ ok: false, error: err.message });
+  });
+
+  return true;
+});
+
 async function fetchGeminiTurns({ convId, at, sid, bl, uPrefix, hl }) {
   const prefix = uPrefix || "";
 
@@ -138,6 +151,31 @@ async function fetchGeminiList({ at, sid, bl, uPrefix, hl, isPinned }) {
 
   if (!resp.ok) {
     return { ok: false, error: `Gemini API エラー: ${resp.status}` };
+  }
+
+  return { ok: true, text: await resp.text() };
+}
+
+async function fetchAimThreadList({ rlz, aep, amc, opi }) {
+  const params = new URLSearchParams({
+    aep: aep || "42",
+    amc: amc || "1",
+    source: "chrome.crn.rb",
+    sourceid: "chrome",
+    udm: "50",
+    "reqpld": "[null,null,0]",
+    msc: "gwsclient",
+  });
+  if (rlz) params.set("rlz", rlz);
+  if (opi) params.set("opi", opi);
+
+  const resp = await fetch(
+    `https://www.google.com/httpservice/web/AimThreadsService/ListThreads?${params}`,
+    { method: "GET", credentials: "include", headers: { Accept: "*/*" } }
+  );
+
+  if (!resp.ok) {
+    return { ok: false, error: `AimThreadsService エラー: ${resp.status}` };
   }
 
   return { ok: true, text: await resp.text() };
