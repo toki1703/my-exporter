@@ -80,8 +80,166 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     });
     return true;
   }
+  if (message.type === "AIM_FETCH_THREAD_CONTENT") {
+    fetchAimThreadContent(message).then(sendResponse).catch((err) => {
+      sendResponse({ ok: false, error: err.message });
+    });
+    return true;
+  }
   return false;
 });
+
+// Open a background tab for the given Google AI Mode thread URL, wait for the
+// page to render, extract the conversation content, then close the tab.
+async function fetchAimThreadContent({ title, threadId }) {
+  const url = new URL("https://www.google.com/search");
+  url.searchParams.set("q", title);
+  url.searchParams.set("udm", "50");
+  if (threadId) url.searchParams.set("mtid", threadId);
+
+  const tab = await chrome.tabs.create({ url: url.toString(), active: false });
+  const tabId = tab.id;
+
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        chrome.tabs.onUpdated.removeListener(onUpdate);
+        reject(new Error("ページ読み込みタイムアウト"));
+      }, 20000);
+
+      function onUpdate(id, info) {
+        if (id === tabId && info.status === "complete") {
+          clearTimeout(timer);
+          chrome.tabs.onUpdated.removeListener(onUpdate);
+          resolve();
+        }
+      }
+      chrome.tabs.onUpdated.addListener(onUpdate);
+    });
+
+    // Wait for the AI content to be rendered by JavaScript.
+    await new Promise((r) => setTimeout(r, 5000));
+
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: extractAimModeContent,
+    });
+
+    const data = results?.[0]?.result;
+    if (!data) return { ok: false, error: "コンテンツを取得できませんでした" };
+    return { ok: true, data };
+  } finally {
+    chrome.tabs.remove(tabId).catch(() => {});
+  }
+}
+
+// Self-contained extractor injected into the Google AI Mode tab.
+// Uses the same selectors as content_scripts/google_ai_mode.js.
+function extractAimModeContent() {
+  function getTurnRoots() {
+    const containers = Array.from(document.querySelectorAll('[data-subtree="aimc"]'));
+    if (containers.length) {
+      const roots = containers.map(findTurnRoot).filter(Boolean);
+      const unique = Array.from(new Set(roots));
+      if (unique.length) return unique;
+    }
+    return Array.from(document.querySelectorAll(".CKgc1d"));
+  }
+
+  function findTurnRoot(el) {
+    let n = el;
+    for (let i = 0; i < 10 && n; i++) {
+      if (n.querySelector(".iMqumd")) return n;
+      n = n.parentElement;
+    }
+    return null;
+  }
+
+  function clean(el) {
+    return el?.innerText?.replace(/\n{3,}/g, "\n\n").trim() ?? "";
+  }
+
+  function removeNoise(el) {
+    Array.from(new Set(
+      Array.from(el.querySelectorAll("button[aria-label]"))
+        .map((b) => b.parentElement).filter((p) => p && p !== el)
+    )).forEach((p) => p.remove());
+    el.querySelectorAll(
+      "button,style,script,noscript,svg,[hidden],[style*='display:none'],[style*='display: none']"
+    ).forEach((n) => n.remove());
+  }
+
+  function userText(root) {
+    const q = root.querySelector(".iMqumd");
+    if (!q) return "";
+    const p = q.parentElement;
+    if (!p) return clean(q);
+    const c = p.cloneNode(true);
+    c.querySelector(".iMqumd")?.remove();
+    removeNoise(c);
+    return (c.textContent ?? "").replace(/\s+/g, " ").trim();
+  }
+
+  function assistantText(root) {
+    const cols = Array.from(root.querySelectorAll('[data-container-id="main-col"]'));
+    if (cols.length) {
+      return cols.map((col) => {
+        const c = col.cloneNode(true);
+        removeNoise(c);
+        return clean(c);
+      }).filter(Boolean).join("\n\n");
+    }
+    const u = userText(root);
+    const full = clean(root);
+    return u ? full.replace(u, "").replace(/^\s+/, "") : full;
+  }
+
+  function extractSources(root) {
+    const seen = new Map();
+    Array.from(root.querySelectorAll("ul.bTFeG li a[href]")).forEach((a) => {
+      let href = a.getAttribute("href") || "";
+      try {
+        const u = new URL(href, location.origin);
+        href = (u.pathname === "/url" && u.searchParams.get("url")) || u.href;
+      } catch { return; }
+      if (!href || seen.has(href)) return;
+      const label = (a.getAttribute("aria-label") || "")
+        .replace(/\.?\s*Opens in a new tab\.?\s*$/i, "").trim();
+      const domain = (() => { try { return new URL(href).hostname.replace(/^www\./, ""); } catch { return href; } })();
+      seen.set(href, { title: (label || a.textContent || href).replace(/\s+/g, " ").trim(), url: href, domain });
+    });
+    return Array.from(seen.values());
+  }
+
+  const params = new URLSearchParams(location.search);
+  const query = params.get("q")?.trim() ?? "";
+  const roots = getTurnRoots();
+  const turns = roots
+    .map((r) => ({ u: userText(r), a: assistantText(r), s: extractSources(r) }))
+    .filter((t) => t.u || t.a || t.s.length);
+
+  const messages = [];
+  for (const t of turns) {
+    if (t.u) messages.push({ role: "user", content: t.u });
+    if (t.a) messages.push({ role: "assistant", content: t.a });
+  }
+  if (messages.length && messages[0].role !== "user" && query) {
+    messages.unshift({ role: "user", content: query });
+  }
+
+  const seenUrls = new Set();
+  const sources = turns.flatMap((t) => t.s).filter((s) => {
+    if (!s.url || seenUrls.has(s.url)) return false;
+    seenUrls.add(s.url);
+    return true;
+  });
+
+  const t = document.title.trim();
+  const parts = t.split(" - ").map((p) => p.trim()).filter(Boolean);
+  const title = parts.length > 1 ? parts.slice(0, -1).join(" - ") : t;
+
+  return { messages, sources, title: title || `Google AI: ${query}` };
+}
 
 async function fetchGeminiTurns({ convId, at, sid, bl, uPrefix, hl }) {
   const prefix = uPrefix || "";

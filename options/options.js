@@ -1365,32 +1365,21 @@ async function doExportAllGoogleAiMode(format, dest, jobId) {
       let messages = [];
       let sources = [];
 
-      const getResp = await new Promise((resolve) => {
+      const contentResp = await new Promise((resolve) => {
         chrome.runtime.sendMessage({
-          type: "AIM_GET_THREAD",
+          type: "AIM_FETCH_THREAD_CONTENT",
+          title: item.title,
           threadId: item.threadId,
-          sessionId: item.sessionId,
-          rlz, aep, amc, opi
         }, resolve);
       });
 
-      if (getResp?.ok && getResp.text) {
-        const parsed = parseGetThreadResponse(getResp.text, item.title);
-        messages = parsed.messages;
-        sources = parsed.sources;
+      if (contentResp?.ok && contentResp.data) {
+        messages = contentResp.data.messages;
+        sources = contentResp.data.sources;
       }
 
       if (messages.length === 0) {
-        const searchHtml = await fetchSearchPage(item.title, { rlz, aep, amc, opi });
-        if (searchHtml) {
-          const parsed = parseSearchHtml(searchHtml, item.title);
-          messages = parsed.messages;
-          sources = parsed.sources;
-        }
-      }
-
-      if (messages.length === 0) {
-        throw new Error("会話の内容を取得できませんでした。");
+        throw new Error(contentResp?.error || "会話の内容を取得できませんでした。");
       }
 
       const result = await new Promise((resolve) => {
@@ -1402,7 +1391,7 @@ async function doExportAllGoogleAiMode(format, dest, jobId) {
           folder,
           data: {
             service: "google_ai_mode",
-            title: `Google AI: ${item.title}`,
+            title: contentResp.data.title || `Google AI: ${item.title}`,
             exportedAt: new Date().toISOString(),
             chatTime: item.createdAt,
             url: `https://www.google.com/search?q=${encodeURIComponent(item.title)}&udm=50`,
@@ -1446,105 +1435,5 @@ async function doExportAllGoogleAiMode(format, dest, jobId) {
         createdAt: tsSec ? new Date(tsSec * 1000).toISOString() : undefined,
       };
     });
-  }
-
-  function parseGetThreadResponse(text, query) {
-    const jsonStart = text.indexOf("[");
-    if (jsonStart === -1) return { messages: [], sources: [] };
-    let data;
-    try { data = JSON.parse(text.slice(jsonStart)); } catch (_) { return { messages: [], sources: [] }; }
-
-    const messages = [];
-    const sources = [];
-
-    // Custom heuristic parsing if AimThreadsService/GetThread structure is nested arrays:
-    // Try to find if there are elements matching standard formats.
-    return { messages, sources };
-  }
-
-  async function fetchSearchPage(query, params) {
-    try {
-      const url = new URL("https://www.google.com/search");
-      url.searchParams.set("q", query);
-      url.searchParams.set("udm", "50");
-      if (params.rlz) url.searchParams.set("rlz", params.rlz);
-      if (params.aep) url.searchParams.set("aep", params.aep);
-      if (params.amc) url.searchParams.set("amc", params.amc);
-      if (params.opi) url.searchParams.set("opi", params.opi);
-
-      const resp = await fetch(url.toString(), { credentials: "include" });
-      if (!resp.ok) return null;
-      return await resp.text();
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function parseSearchHtml(htmlText, query) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(htmlText, "text/html");
-    const turnsContainer = doc.querySelector('[data-xid="aim-zsv2-turns-container"]');
-    
-    const cleanText = (el) => el?.innerText?.replace(/\n{3,}/g, "\n\n").trim() ?? "";
-    const messages = [];
-
-    if (turnsContainer) {
-      const items = turnsContainer.querySelectorAll("ul > li");
-      if (items.length > 0) {
-        for (const item of items) {
-          const fullText = cleanText(item);
-          if (!fullText) continue;
-
-          const queryEl =
-            item.querySelector("h1, h2, h3") ??
-            item.querySelector('[role="heading"]') ??
-            item.querySelector('[data-xid*="query"], [data-xid*="user-query"]');
-
-          if (queryEl) {
-            const userText = cleanText(queryEl);
-            const responseText = fullText.replace(userText, "").replace(/^\s+/, "");
-            messages.push({ role: "user", content: userText });
-            if (responseText) {
-              messages.push({ role: "assistant", content: responseText });
-            }
-          } else {
-            if (messages.length === 0) {
-              messages.push({ role: "user", content: query });
-            }
-            messages.push({ role: "assistant", content: fullText });
-          }
-        }
-      }
-    }
-
-    if (messages.length === 0) {
-      const activeTurn = doc.querySelector('[data-xid="aim-mars-turn-root"]');
-      const text = activeTurn ? cleanText(activeTurn) : "";
-      if (text) {
-        messages.push({ role: "user", content: query });
-        messages.push({ role: "assistant", content: text });
-      }
-    }
-
-    if (messages.length > 0 && messages[0]?.role !== "user") {
-      messages.unshift({ role: "user", content: query });
-    }
-
-    const seenUrls = new Set();
-    const sources = Array.from(
-      (turnsContainer ?? doc).querySelectorAll('a[href^="http"]')
-    )
-      .filter((a) => {
-        const url = a.href;
-        if (!url || seenUrls.has(url)) return false;
-        if (/google\.com\/(search|url|imgres)/.test(url)) return false;
-        const title = a.textContent.trim();
-        if (!title) return false;
-        seenUrls.add(url);
-        return true;
-      })
-      .map((a) => ({ title: a.textContent.trim(), url: a.href }));
-
-    return { messages, sources };
   }
 }
