@@ -1,46 +1,105 @@
 // Google Search — AI Mode collector
-// AI Mode appears when the search result page shows an AI-generated summary block.
+// Targets the dedicated AI Mode chat interface (?udm=50), NOT the AI Overview
+// block that can appear in regular search results.
+//
+// Key selectors discovered from HAR analysis (2026-06):
+//   [data-xid="aim-zsv2-turns-container"]  — completed conversation turns (ul > li)
+//   [data-xid="aim-mars-turn-root"]        — active/streaming turn root
 
 (function () {
   const { register, cleanText } = window.__myExporter;
 
   register("google_ai_mode", async () => {
-    // The AI overview block lives inside a specific data-attrid attribute
-    const aiBlock =
-      document.querySelector('[data-attrid="wa:/description"]') ??
-      document.querySelector(".aiob") ??  // fallback class (may change)
-      document.querySelector("[jscontroller][data-async-context]"); // generic fallback
+    const params = new URLSearchParams(location.search);
 
-    if (!aiBlock) {
+    if (params.get("udm") !== "50") {
       throw new Error(
-        "AI モードの回答が見つかりません。AI モードの検索結果ページを開いてください。"
+        "Google AI Mode のページで使用してください（URL に udm=50 が含まれている必要があります）"
       );
     }
 
-    const query =
-      document.querySelector("input[name='q']")?.value ??
-      new URLSearchParams(location.search).get("q") ??
-      "";
+    const query = params.get("q")?.trim() ?? "";
 
-    const answer = cleanText(aiBlock);
+    if (!query) {
+      throw new Error("検索を実行してからエクスポートしてください");
+    }
 
-    // Collect cited sources if present
+    const turnsContainer = document.querySelector('[data-xid="aim-zsv2-turns-container"]');
+    const messages = extractMessages(turnsContainer, query);
+
+    if (messages.length === 0) {
+      // Fall back to the active/streaming turn root.
+      const activeTurn = document.querySelector('[data-xid="aim-mars-turn-root"]');
+      const text = activeTurn ? cleanText(activeTurn) : "";
+      if (!text) {
+        throw new Error(
+          "回答が見つかりません。回答が完了してからエクスポートしてください。"
+        );
+      }
+      messages.push({ role: "user", content: query });
+      messages.push({ role: "assistant", content: text });
+    }
+
+    if (messages[0]?.role !== "user") {
+      messages.unshift({ role: "user", content: query });
+    }
+
+    const seenUrls = new Set();
     const sources = Array.from(
-      document.querySelectorAll("[data-attrid='wa:/description'] a[href], .aiob a[href]")
+      (turnsContainer ?? document).querySelectorAll('a[href^="http"]')
     )
-      .map((a) => ({ title: a.textContent.trim(), url: a.href }))
-      .filter((s) => s.title && s.url);
+      .filter((a) => {
+        const url = a.href;
+        if (!url || seenUrls.has(url)) return false;
+        if (/google\.com\/(search|url|imgres)/.test(url)) return false;
+        const title = a.textContent.trim();
+        if (!title) return false;
+        seenUrls.add(url);
+        return true;
+      })
+      .map((a) => ({ title: a.textContent.trim(), url: a.href }));
 
     return {
       service: "google_ai_mode",
-      title: query ? `Google AI: ${query}` : "Google AI Mode Export",
+      title: `Google AI: ${query}`,
       exportedAt: new Date().toISOString(),
       url: location.href,
-      messages: [
-        { role: "user", content: query },
-        { role: "assistant", content: answer },
-      ],
+      messages,
       sources,
     };
   });
+
+  function extractMessages(container, latestQuery) {
+    const messages = [];
+    if (!container) return messages;
+
+    const items = container.querySelectorAll("ul > li");
+    if (items.length === 0) return messages;
+
+    for (const item of items) {
+      const fullText = cleanText(item);
+      if (!fullText) continue;
+
+      const queryEl =
+        item.querySelector("h1, h2, h3") ??
+        item.querySelector('[role="heading"]') ??
+        item.querySelector('[data-xid*="query"], [data-xid*="user-query"]');
+
+      if (queryEl) {
+        const userText = cleanText(queryEl);
+        const responseText = fullText.replace(userText, "").replace(/^\s+/, "");
+        messages.push({ role: "user", content: userText });
+        if (responseText) {
+          messages.push({ role: "assistant", content: responseText });
+        }
+      } else {
+        if (messages.length === 0) {
+          messages.push({ role: "user", content: latestQuery });
+        }
+        messages.push({ role: "assistant", content: fullText });
+      }
+    }
+
+    return messages;
+  }
 })();

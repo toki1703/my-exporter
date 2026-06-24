@@ -7,7 +7,7 @@ const SERVICES = {
   chatgpt:        { name: "ChatGPT",        icon: `<img src="../images/OpenAI-black-monoblossom.svg" alt="ChatGPT">`,       hosts: ["chatgpt.com", "chat.openai.com"] },
   gemini:         { name: "Gemini",         icon: `<img src="../images/Google_Gemini_icon_2025.svg" alt="Gemini">`,         hosts: ["gemini.google.com"] },
   claude:         { name: "Claude",         icon: `<img src="../images/Claude_AI_symbol.svg" alt="Claude">`,               hosts: ["claude.ai"] },
-  google_ai_mode: { name: "Google AI Mode", icon: `<img src="../images/Google_Gemini_icon_2025.svg" alt="Google AI Mode">`, hosts: ["www.google.com"], pathPrefix: "/search" },
+  google_ai_mode: { name: "Google AI Mode", icon: `<img src="../images/Google_Gemini_icon_2025.svg" alt="Google AI Mode">`, hosts: ["www.google.com"], pathPrefix: "/search", searchParams: { udm: "50" } },
   perplexity:     { name: "Perplexity",     icon: `<img src="../images/perplexity.svg" alt="Perplexity">`,           hosts: ["perplexity.ai", "www.perplexity.ai"] },
 };
 
@@ -28,6 +28,11 @@ function detectService(url) {
     const hostMatch = meta.hosts.some((h) => host === h || host.endsWith(`.${h}`));
     if (!hostMatch) continue;
     if (meta.pathPrefix && !parsed.pathname.startsWith(meta.pathPrefix)) continue;
+    if (meta.searchParams) {
+      const urlParams = new URLSearchParams(parsed.search);
+      const matches = Object.entries(meta.searchParams).every(([k, v]) => urlParams.get(k) === v);
+      if (!matches) continue;
+    }
     return key;
   }
   return null;
