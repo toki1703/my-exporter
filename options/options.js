@@ -60,6 +60,18 @@ function _escHtml(s) {
   return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
+function _archiveCurrentJobs() {
+  const jobsList = document.getElementById("jobs-list");
+  if (!jobsList.children.length) return;
+  const pastJobsList = document.getElementById("past-jobs-list");
+  const pastJobsDetails = document.getElementById("past-jobs-details");
+  for (const card of Array.from(jobsList.children)) {
+    pastJobsList.prepend(card);
+  }
+  pastJobsDetails.classList.remove("hidden");
+  document.getElementById("past-jobs-count").textContent = `${pastJobsList.children.length} 件`;
+}
+
 function createJobCard(jobId, service) {
   const meta = JOB_META[service] || { name: service, icon: "📤" };
   const div = document.createElement("div");
@@ -328,6 +340,7 @@ async function runBulkExport({ btn, hosts, openHint, func, service }) {
   btn.textContent = "実行中…";
   document.getElementById("btn-all").disabled = true;
   hideMessage();
+  _archiveCurrentJobs();
 
   const result = await _runExport({ hosts, openHint, func, service });
 
@@ -419,6 +432,7 @@ document.getElementById("btn-all").addEventListener("click", async (e) => {
   btn.textContent = "実行中…";
   INDIVIDUAL_BTN_IDS.forEach((id) => { document.getElementById(id).disabled = true; });
   hideMessage();
+  _archiveCurrentJobs();
 
   // 既に実行中のサービスはスキップ
   await Promise.all(
