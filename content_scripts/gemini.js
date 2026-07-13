@@ -106,9 +106,36 @@
   // Format:  )]}'\n\nSIZE\n[["wrb.fr","hNvQHb","<JSON>",...],...]\nSIZE\n[["e",...]]
   // The first "[" starts the envelope array we need.
 
-  // Recursively collect googleusercontent image URLs from a proto subtree.
-  // The turn arrays have unstable indices, so scanning strings is more robust
-  // than hardcoding paths. Avatar URLs (…googleusercontent.com/a/…) are skipped.
+  // Files attached to a single turn live at turn[2][0][4][0][3] (verified via
+  // references/gemini.google.com.har). turn[2][0][4][0][4] holds the
+  // conversation-wide cumulative file list repeated in every turn — never read
+  // it, or each message would embed every image in the conversation.
+  // Item shape:
+  //   [_, kind, filename, url, _, token, _, _, _, [sec,nanos], _, mimeType, _, _, _, [h, w, bytes]]
+  // The url (lh3.googleusercontent.com/gg/…) 302-redirects via lh3.google.com
+  // (cookie-gated) to the actual image, so it must be fetched by the service
+  // worker, which has host permissions for both hosts.
+  function extractTurnFileItems(turn) {
+    const items = turn?.[2]?.[0]?.[4]?.[0]?.[3];
+    if (!Array.isArray(items)) return [];
+    return items
+      .filter(
+        (it) =>
+          Array.isArray(it) &&
+          typeof it[3] === "string" &&
+          it[3].startsWith("https://") &&
+          (typeof it[11] !== "string" || it[11].startsWith("image/"))
+      )
+      .map((it) => ({
+        filename: typeof it[2] === "string" ? it[2] : "image",
+        url: it[3],
+        mimeType: typeof it[11] === "string" ? it[11] : null,
+        sizeBytes: Array.isArray(it[15]) ? it[15][2] ?? null : null,
+      }));
+  }
+
+  // Model-generated images have no fixed index, so scan the response subtree
+  // (turn[3]) for googleusercontent URLs instead.
   function collectImageUrls(node, out = new Set()) {
     if (typeof node === "string") {
       if (
@@ -123,16 +150,18 @@
     return out;
   }
 
-  async function buildImageAttachments(urls) {
+  async function buildImageAttachments(files) {
     const { fetchImageAsDataUrl } = window.__myExporter;
     const attachments = [];
-    for (const url of urls) {
-      const dataUrl = await fetchImageAsDataUrl(url);
+    for (const file of files) {
+      const meta = typeof file === "string" ? { url: file } : file;
+      const dataUrl = await fetchImageAsDataUrl(meta.url);
       attachments.push({
         type: "image",
-        filename: url.split("/").pop()?.split("=")[0] || "image",
-        mimeType: dataUrl?.match(/^data:([^;,]+)[;,]/)?.[1] || null,
-        url,
+        filename: meta.filename || meta.url.split("/").pop()?.split("=")[0] || "image",
+        mimeType: meta.mimeType || dataUrl?.match(/^data:([^;,]+)[;,]/)?.[1] || null,
+        sizeBytes: meta.sizeBytes ?? null,
+        url: meta.url,
         dataUrl,
       });
     }
@@ -189,13 +218,15 @@
         ? thinkingParts.filter(s => typeof s === "string").join("").trim()
         : null;
 
-      // Uploaded images live in the user subtree (turn[2]), generated images
-      // in the model subtree (turn[3]). Skip user images from the model set.
-      const userImageUrls = collectImageUrls(turn?.[2]);
+      // Uploaded images: only the ones attached to THIS turn. The cumulative
+      // conversation file list (turn[2][0][4][0][4]) must stay excluded from
+      // the model set too, so gather every user-side URL for filtering.
+      const turnFiles = extractTurnFileItems(turn);
+      const userSideUrls = collectImageUrls(turn?.[2]);
       const modelImageUrls = [...collectImageUrls(turn?.[3])].filter(
-        (u) => !userImageUrls.has(u)
+        (u) => !userSideUrls.has(u)
       );
-      const userAttachments = await buildImageAttachments([...userImageUrls]);
+      const userAttachments = await buildImageAttachments(turnFiles);
       const modelAttachments = await buildImageAttachments(modelImageUrls);
 
       if ((typeof userText === "string" && userText.trim()) || userAttachments.length > 0) {
