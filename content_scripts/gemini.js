@@ -96,11 +96,7 @@
             reject(new Error(resp?.error || "Gemini API エラー"));
             return;
           }
-          try {
-            resolve(parseResponse(resp.text));
-          } catch (err) {
-            reject(err);
-          }
+          parseResponse(resp.text).then(resolve, reject);
         }
       );
     });
@@ -110,7 +106,40 @@
   // Format:  )]}'\n\nSIZE\n[["wrb.fr","hNvQHb","<JSON>",...],...]\nSIZE\n[["e",...]]
   // The first "[" starts the envelope array we need.
 
-  function parseResponse(text) {
+  // Recursively collect googleusercontent image URLs from a proto subtree.
+  // The turn arrays have unstable indices, so scanning strings is more robust
+  // than hardcoding paths. Avatar URLs (…googleusercontent.com/a/…) are skipped.
+  function collectImageUrls(node, out = new Set()) {
+    if (typeof node === "string") {
+      if (
+        /^https:\/\/lh\d+\.googleusercontent\.com\//.test(node) &&
+        !/googleusercontent\.com\/a[/-]/.test(node)
+      ) {
+        out.add(node);
+      }
+    } else if (Array.isArray(node)) {
+      for (const child of node) collectImageUrls(child, out);
+    }
+    return out;
+  }
+
+  async function buildImageAttachments(urls) {
+    const { fetchImageAsDataUrl } = window.__myExporter;
+    const attachments = [];
+    for (const url of urls) {
+      const dataUrl = await fetchImageAsDataUrl(url);
+      attachments.push({
+        type: "image",
+        filename: url.split("/").pop()?.split("=")[0] || "image",
+        mimeType: dataUrl?.match(/^data:([^;,]+)[;,]/)?.[1] || null,
+        url,
+        dataUrl,
+      });
+    }
+    return attachments;
+  }
+
+  async function parseResponse(text) {
     const start = text.indexOf("[");
     if (start === -1) throw new Error("API レスポンスのパースに失敗しました。");
 
@@ -160,15 +189,37 @@
         ? thinkingParts.filter(s => typeof s === "string").join("").trim()
         : null;
 
-      if (typeof userText === "string" && userText.trim())
-        messages.push({ role: "user", content: userText.trim(), timestamp });
+      // Uploaded images live in the user subtree (turn[2]), generated images
+      // in the model subtree (turn[3]). Skip user images from the model set.
+      const userImageUrls = collectImageUrls(turn?.[2]);
+      const modelImageUrls = [...collectImageUrls(turn?.[3])].filter(
+        (u) => !userImageUrls.has(u)
+      );
+      const userAttachments = await buildImageAttachments([...userImageUrls]);
+      const modelAttachments = await buildImageAttachments(modelImageUrls);
 
-      if (modelText?.trim()) {
-        const cleaned = removeCitations(modelText.trim());
+      if ((typeof userText === "string" && userText.trim()) || userAttachments.length > 0) {
+        const entry = {
+          role: "user",
+          content: userText?.trim() || `[画像ファイル ${userAttachments.length} 件]`,
+          timestamp,
+        };
+        if (userAttachments.length > 0) entry.attachments = userAttachments;
+        messages.push(entry);
+      }
+
+      if (modelText?.trim() || modelAttachments.length > 0) {
+        const cleaned = removeCitations(modelText?.trim() ?? "");
         const content = thinkingText
           ? `<details><summary>Thinking</summary>\n\n${thinkingText}\n\n</details>\n\n${cleaned}`
           : cleaned;
-        messages.push({ role: "assistant", content, timestamp });
+        const entry = {
+          role: "assistant",
+          content: content || `[画像ファイル ${modelAttachments.length} 件]`,
+          timestamp,
+        };
+        if (modelAttachments.length > 0) entry.attachments = modelAttachments;
+        messages.push(entry);
       }
     }
 

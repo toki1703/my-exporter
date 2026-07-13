@@ -57,7 +57,9 @@ export function toMarkdown(data, _service) {
     if (Array.isArray(msg.attachments) && msg.attachments.length > 0) {
       for (const attachment of msg.attachments) {
         const filename = attachment.filename || "attachment";
-        const imageUrl = attachment.uploadImageUrl || attachment.url || attachment.dataUrl;
+        // Prefer the base64 data URL so images survive outside the source site
+        // (remote URLs are often session-scoped or relative API paths).
+        const imageUrl = attachment.uploadImageUrl || attachment.dataUrl || attachment.url;
 
         if (imageUrl) {
           lines.push(`![${filename}](${imageUrl})`);

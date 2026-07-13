@@ -27,9 +27,16 @@
         messages.push({ role: "user", content: entry.query_str.trim(), timestamp: ts });
       }
 
-      const content = extractAssistantContent(entry.blocks ?? []);
-      if (content) {
-        messages.push({ role: "assistant", content, timestamp: ts });
+      const { content, imageUrls } = extractAssistantContent(entry.blocks ?? []);
+      if (content || imageUrls.length > 0) {
+        const attachments = await buildImageAttachments(imageUrls);
+        const msg = {
+          role: "assistant",
+          content: content || `[画像ファイル ${attachments.length} 件]`,
+          timestamp: ts,
+        };
+        if (attachments.length > 0) msg.attachments = attachments;
+        messages.push(msg);
       }
     }
 
@@ -114,7 +121,30 @@
     return resp.json();
   }
 
+  // ── Convert image URLs to base64 attachments ───────────────────────────────
+
+  async function buildImageAttachments(urls) {
+    const { fetchImageAsDataUrl } = window.__myExporter;
+    const attachments = [];
+    for (const url of urls) {
+      const dataUrl = await fetchImageAsDataUrl(url);
+      let filename = "image";
+      try {
+        filename = new URL(url).pathname.split("/").pop() || "image";
+      } catch (_) {}
+      attachments.push({
+        type: "image",
+        filename,
+        mimeType: dataUrl?.match(/^data:([^;,]+)[;,]/)?.[1] || null,
+        url,
+        dataUrl,
+      });
+    }
+    return attachments;
+  }
+
   // ── Extract assistant text content from entry blocks ───────────────────────
+  // Returns { content, imageUrls } — images become base64 attachments upstream.
 
   function extractAssistantContent(blocks) {
     // Build web_results list for citation replacement
@@ -140,24 +170,25 @@
       });
 
     const parts = [];
+    const imageUrls = [];
+    const addImage = (url) => {
+      if (url && !imageUrls.includes(url)) imageUrls.push(url);
+    };
+
     for (const block of blocks) {
       if (block.intended_usage === "media_items") {
         for (const item of block.media_block?.media_items ?? []) {
-          if (item.medium === "image" && item.image) {
-            parts.push(`![image](${item.image})`);
-          }
+          if (item.medium === "image" && item.image) addImage(item.image);
         }
       } else if (block.intended_usage === "ask_text") {
         const answer = block.markdown_block?.answer;
         if (answer?.trim()) parts.push(replaceCitations(answer.trim()));
         for (const item of block.markdown_block?.media_items ?? []) {
-          if (item.medium === "image" && item.image) {
-            parts.push(`![image](${item.image})`);
-          }
+          if (item.medium === "image" && item.image) addImage(item.image);
         }
       }
     }
 
-    return parts.join("\n\n");
+    return { content: parts.join("\n\n"), imageUrls };
   }
 })();

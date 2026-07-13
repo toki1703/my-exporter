@@ -86,12 +86,54 @@
         .trim();
     }
 
+    // Image files attached to a message live in files_v2 (newer) / files
+    // (older). Their preview/thumbnail URLs are relative /api/... paths served
+    // same-origin, so a credentialed fetch converts them to base64.
+    const { fetchImageAsDataUrl } = window.__myExporter;
+    async function extractImageAttachments(msg) {
+      const files = [...(msg.files_v2 ?? []), ...(msg.files ?? [])];
+      const seen = new Set();
+      const attachments = [];
+
+      for (const file of files) {
+        if (!file || (file.file_kind && file.file_kind !== "image")) continue;
+        const id = file.file_uuid || file.uuid || file.file_name;
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+
+        const rawUrl =
+          file.preview_asset?.url ||
+          file.preview_url ||
+          file.thumbnail_asset?.url ||
+          file.thumbnail_url;
+        if (!rawUrl) continue;
+
+        const url = rawUrl.startsWith("/") ? `${location.origin}${rawUrl}` : rawUrl;
+        const dataUrl = await fetchImageAsDataUrl(url);
+        attachments.push({
+          type: "image",
+          filename: file.file_name || id,
+          mimeType: dataUrl?.match(/^data:([^;,]+)[;,]/)?.[1] || null,
+          url,
+          dataUrl,
+        });
+      }
+
+      return attachments;
+    }
+
     const messages = [];
     for (const msg of data.chat_messages ?? []) {
       const role = msg.sender === "human" ? "user" : "assistant";
       const content = extractText(msg.content);
-      if (content) {
-        messages.push({ role, content });
+      const attachments = await extractImageAttachments(msg);
+      if (content || attachments.length > 0) {
+        const entry = {
+          role,
+          content: content || `[画像ファイル ${attachments.length} 件]`,
+        };
+        if (attachments.length > 0) entry.attachments = attachments;
+        messages.push(entry);
       }
     }
 

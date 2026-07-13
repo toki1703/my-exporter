@@ -64,6 +64,36 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
+// Generic image fetch — image CDNs (lh3.googleusercontent.com,
+// pplx-res.cloudinary.com) reject cross-origin fetches from content scripts.
+// The service worker has host permissions for them, so it can fetch with the
+// user's cookies and return the image as a base64 data URL.
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type !== "FETCH_IMAGE") return false;
+
+  fetchImageAsDataUrl(message.url).then(sendResponse).catch((err) => {
+    sendResponse({ ok: false, error: err.message });
+  });
+
+  return true;
+});
+
+async function fetchImageAsDataUrl(url) {
+  const resp = await fetch(url, { credentials: "include" });
+  if (!resp.ok) {
+    return { ok: false, error: `画像取得エラー: ${resp.status}` };
+  }
+  const blob = await resp.blob();
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  const type = blob.type || "image/png";
+  return { ok: true, dataUrl: `data:${type};base64,${btoa(binary)}`, mimeType: type };
+}
+
 // Google AI Mode — AimThreadsService/ListThreads fetch.
 // Called by the google_ai_mode content script to obtain the thread creation
 // timestamp for the current conversation, which is used as chatTime.

@@ -17,6 +17,8 @@
     "https://www.google.com/*",
     "https://perplexity.ai/*",
     "https://www.perplexity.ai/*",
+    "https://*.googleusercontent.com/*",
+    "https://pplx-res.cloudinary.com/*",
     "http://127.0.0.1:27123/*",
     "https://127.0.0.1:27124/*"
   ],
